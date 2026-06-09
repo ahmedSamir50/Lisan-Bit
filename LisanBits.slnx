@@ -1,0 +1,13 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="DbProbe/DbProbe.csproj" />
+    <Project Path="src/LisanBits.AppHost/LisanBits.AppHost.csproj" />
+    <Project Path="src/LisanBits.Dashboard/LisanBits.Dashboard.csproj" />
+    <Project Path="src/LisanBits.DataPipeline/LisanBits.DataPipeline.csproj" />
+    <Project Path="src/LisanBits.ServiceDefaults/LisanBits.ServiceDefaults.csproj" />
+    <Project Path="src/LisanBits.WebApi/LisanBits.WebApi.csproj" />
+    <Project Path="src/LisanBits.ConceptNetImporter/LisanBits.ConceptNetImporter.csproj" />
+    <Project Path="src/LisanBits.GrammarPipeline/LisanBits.GrammarPipeline.csproj" />
+    <Project Path="src/LisanBits.Trainer/LisanBits.Trainer.csproj" />
+  </Folder>
+</Solution>

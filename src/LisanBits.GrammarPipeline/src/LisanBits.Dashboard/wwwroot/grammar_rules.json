@@ -1,0 +1,26 @@
+﻿{
+  "GeneratedAt": "2026-06-08T06:23:06.0649868Z",
+  "WordRules": {
+    "\u0633\u0652\u0645": {
+      "Poss": "Genitive"
+    },
+    "\u0627\u0644\u0644\u0647": {
+      "Adj": "Genitive"
+    },
+    "\u0644\u0647": {
+      "Poss": "Accusative"
+    },
+    "\u0631\u0628": {
+      "Poss": "Genitive"
+    }
+  },
+  "PosRules": {
+    "N": {
+      "Poss": "Genitive"
+    },
+    "PN": {
+      "Adj": "Genitive",
+      "Poss": "Accusative"
+    }
+  }
+}

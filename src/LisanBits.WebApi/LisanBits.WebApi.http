@@ -1,0 +1,6 @@
+@LisanBits.WebApi_HostAddress = http://localhost:5201
+
+GET {{LisanBits.WebApi_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

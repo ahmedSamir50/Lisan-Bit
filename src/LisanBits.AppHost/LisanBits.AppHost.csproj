@@ -1,0 +1,19 @@
+<Project Sdk="Aspire.AppHost.Sdk/13.3.5">
+
+  <ItemGroup>
+    <ProjectReference Include="..\LisanBits.DataPipeline\LisanBits.DataPipeline.csproj" />
+    <ProjectReference Include="..\LisanBits.WebApi\LisanBits.WebApi.csproj" />
+    <ProjectReference Include="..\LisanBits.Dashboard\LisanBits.Dashboard.csproj" />
+    <ProjectReference Include="..\LisanBits.ConceptNetImporter\LisanBits.ConceptNetImporter.csproj" />
+    <ProjectReference Include="..\LisanBits.GrammarPipeline\LisanBits.GrammarPipeline.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <UserSecretsId>5d2334f0-6a2b-414d-9ccb-748463ce6d67</UserSecretsId>
+  </PropertyGroup>
+
+</Project>

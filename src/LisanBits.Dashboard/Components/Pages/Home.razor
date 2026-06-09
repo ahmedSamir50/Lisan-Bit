@@ -1,0 +1,846 @@
+@page "/"
+@using Microsoft.EntityFrameworkCore
+@using LisanBits.DataPipeline.Data
+@using LisanBits.DataPipeline.Data.Models
+@using System.Net.Http.Json
+@inject IDbContextFactory<PipelineDbContext> DbFactory
+@inject LisanBits.Dashboard.Services.ScraperProgressService ProgressService
+@inject IHttpClientFactory HttpClientFactory
+@implements IDisposable
+
+<PageTitle>LisanBits - Data Crawler Dashboard</PageTitle>
+
+<div class="container-fluid mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h1><i class="bi bi-diagram-3-fill text-primary"></i> LisanBits Data Constitution Dashboard <span class="badge bg-success" style="font-size: 0.4em;">Live</span></h1>
+        <button class="btn btn-danger" @onclick="ResetDatabase"><i class="bi bi-exclamation-triangle-fill"></i> HARD RESET DATABASE</button>
+    </div>
+    
+    <!-- Stats Section -->
+    <div class="row mb-4">
+        <div class="col-md-6">
+            <div class="card shadow-sm h-100">
+                <div class="card-header bg-dark text-white"><i class="bi bi-pie-chart-fill"></i> Data Constitution (Category Balance)</div>
+                <div class="card-body">
+                    @if (categoryStats == null)
+                    {
+                        <p>Loading stats...</p>
+                    }
+                    else if (!categoryStats.Any())
+                    {
+                        <p class="text-muted">No data scraped yet. Waiting for worker...</p>
+                    }
+                    else
+                    {
+                        var totalSentences = categoryStats.Sum(c => c.TotalSentences);
+                        totalSentences = totalSentences == 0 ? 1 : totalSentences;
+
+                        foreach (var cat in categoryStats.OrderByDescending(c => c.TotalSentences))
+                        {
+                            double percent = (double)cat.TotalSentences / totalSentences * 100;
+                            string barClass = percent > 30 ? "bg-warning" : "bg-success";
+                            
+                            <div class="mb-3">
+                                <div class="d-flex justify-content-between">
+                                    <strong>@cat.Category</strong>
+                                    <span>@cat.TotalSentences Sentences (@percent.ToString("0.0")%)</span>
+                                </div>
+                                <div class="progress" style="height: 20px;">
+                                    <div class="progress-bar @barClass" role="progressbar" style="width: @percent%;" aria-valuenow="@percent" aria-valuemin="0" aria-valuemax="100"></div>
+                                </div>
+                                <small class="text-muted">@cat.TotalWords Words</small>
+                            </div>
+                        }
+                    }
+                </div>
+                <!-- Duplicate Detection Footer -->
+                <div class="card-footer">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            @if (isScanningDuplicates)
+                            {
+                                <span class="spinner-border spinner-border-sm text-primary" role="status"></span>
+                                <span class="ms-2 text-primary">Scanning for duplicates (takes ~6s)...</span>
+                            }
+                            else if (totalDuplicates.HasValue)
+                            {
+                                if (totalDuplicates.Value > 0)
+                                {
+                                    <span class="text-danger fw-bold"><i class="bi bi-exclamation-triangle-fill"></i> Found @totalDuplicates.Value.ToString("N0") duplicates</span>
+                                }
+                                else
+                                {
+                                    <span class="text-success"><i class="bi bi-check-circle-fill"></i> No duplicates found</span>
+                                }
+                            }
+                            else
+                            {
+                                <span class="text-muted"><i class="bi bi-info-circle"></i> Duplicate scan pending</span>
+                            }
+                        </div>
+                        <div>
+                            <button class="btn btn-outline-secondary btn-sm" @onclick="ScanForDuplicates" 
+                                disabled="@(isRemovingDuplicates || isScanningDuplicates)"
+                            ><i class="bi bi-search"></i> Scan</button>
+                            @if (totalDuplicates.HasValue && totalDuplicates.Value > 0)
+                            {
+                                <button class="btn btn-danger btn-sm ms-2" @onclick="RemoveDuplicates" disabled="@(isRemovingDuplicates || isScanningDuplicates)">
+                                    @if(isRemovingDuplicates || isScanningDuplicates) { <span class="spinner-border spinner-border-sm"></span> }
+                                    else { <i class="bi bi-trash"></i> } Remove
+                                </button>
+                            }
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-6">
+            <div class="card shadow-sm h-100">
+                <div class="card-header bg-dark text-white"><i class="bi bi-bar-chart-fill"></i> Extraction by Source</div>
+                <div class="card-body">
+                    @if (sourceStats != null && sourceStats.Any())
+                    {
+                        <ul class="list-group list-group-flush">
+                            @foreach (var src in sourceStats.OrderByDescending(s => s.TotalSentences))
+                            {
+                                <li class="list-group-item d-flex justify-content-between align-items-center">
+                                    @src.Source
+                                    <span class="badge bg-primary rounded-pill">@src.TotalSentences</span>
+                                </li>
+                            }
+                        </ul>
+                    }
+                    else
+                    {
+                         <p class="text-muted">No source data yet.</p>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ConceptNet Knowledge Graph Seeding Section -->
+    <div class="card shadow-sm mb-4">
+        <div class="card-header bg-dark text-white"><i class="bi bi-share-fill"></i> ConceptNet Graph Knowledge Seeding</div>
+        <div class="card-body">
+            @if (importerStatus == null)
+            {
+                <div class="d-flex align-items-center text-muted">
+                    <div class="spinner-border spinner-border-sm me-2" role="status"></div>
+                    <span>Loading ConceptNet Importer status...</span>
+                </div>
+            }
+            else
+            {
+                <div class="row align-items-center">
+                    <div class="col-md-3 mb-3 mb-md-0">
+                        <div class="p-3 border rounded   text-center">
+                            <span class="text-muted d-block small mb-1">Importer Status</span>
+                            @if (importerStatus.Status == "Idle")
+                            {
+                                <span class="badge bg-secondary fs-6"><i class="bi bi-info-circle"></i> Idle</span>
+                            }
+                            else if (importerStatus.Status == "Downloading")
+                            {
+                                <span class="badge bg-warning text-dark fs-6"><i class="bi bi-download"></i> Downloading</span>
+                            }
+                            else if (importerStatus.Status == "Importing")
+                            {
+                                <span class="badge bg-primary fs-6"><i class="bi bi-arrow-repeat spin"></i> Importing</span>
+                            }
+                            else if (importerStatus.Status == "Completed")
+                            {
+                                <span class="badge bg-success fs-6"><i class="bi bi-check-circle"></i> Completed</span>
+                            }
+                            else if (importerStatus.Status == "Failed")
+                            {
+                                <span class="badge bg-danger fs-6"><i class="bi bi-exclamation-triangle"></i> Failed</span>
+                            }
+                        </div>
+                    </div>
+                    <div class="col-md-6 mb-3 mb-md-0">
+                        @if (importerStatus.Status == "Downloading")
+                        {
+                            <div class="mb-1 d-flex justify-content-between small">
+                                <span>Downloading assertions dataset (@(importerStatus.Progress.ToString("0.0"))%)</span>
+                                <span>@(FormatBytes(importerStatus.DownloadedBytes)) / @(FormatBytes(importerStatus.TotalBytes))</span>
+                            </div>
+                            <div class="progress" style="height: 15px;">
+                                <div class="progress-bar bg-warning progress-bar-striped progress-bar-animated" role="progressbar" style="width: @(importerStatus.Progress)%;" aria-valuenow="@(importerStatus.Progress)" aria-valuemin="0" aria-valuemax="100"></div>
+                            </div>
+                        }
+                        else if (importerStatus.Status == "Importing")
+                        {
+                            <div class="mb-1 d-flex justify-content-between small">
+                                <span>Parsing & Bulk-Inserting to Neo4j</span>
+                                <strong>@(importerStatus.ImportedEdges.ToString("N0")) edges</strong>
+                            </div>
+                            <div class="progress" style="height: 15px;">
+                                <div class="progress-bar bg-primary progress-bar-striped progress-bar-animated" role="progressbar" style="width: 100%;" aria-valuenow="100" aria-valuemin="0" aria-valuemax="100"></div>
+                            </div>
+                            <small class="text-muted d-block mt-1">Processed lines: @(importerStatus.ProcessedLines.ToString("N0"))</small>
+                        }
+                        else if (importerStatus.Status == "Completed")
+                        {
+                            <div class="alert alert-success py-2 mb-0"><i class="bi bi-check-circle-fill"></i> Seeding completed successfully. Total imported edges: <strong>@(importerStatus.ImportedEdges.ToString("N0"))</strong></div>
+                        }
+                        else if (importerStatus.Status == "Failed")
+                        {
+                            <div class="alert alert-danger py-2 mb-0"><i class="bi bi-exclamation-octagon-fill"></i> Seeding failed: @(importerStatus.ErrorMessage)</div>
+                        }
+                        else
+                        {
+                            <p class="text-muted mb-0">ConceptNet knowledge base is currently idle. Click trigger to begin seeding.</p>
+                        }
+                    </div>
+                    <div class="col-md-3 text-end">
+                        @if (importerStatus.Status == "Idle" || importerStatus.Status == "Completed" || importerStatus.Status == "Failed")
+                        {
+                            <button class="btn btn-primary w-100 mb-2" @onclick="TriggerImport"><i class="bi bi-play-fill"></i> Trigger Import</button>
+                            <button class="btn btn-outline-danger w-100" @onclick="ResetConceptNet"><i class="bi bi-trash-fill"></i> Reset ConceptNet Data</button>
+                        }
+                        else
+                        {
+                            <button class="btn btn-secondary w-100" disabled><i class="bi bi-hourglass-split"></i> Importing...</button>
+                        }
+                    </div>
+                </div>
+            }
+        </div>
+    </div>
+
+    <!-- Grammar & Inflection Pipeline Section -->
+    <div class="card shadow-sm mb-4">
+        <div class="card-header bg-dark text-white"><i class="bi bi-book-half"></i> Grammar &amp; Inflection Pipeline</div>
+        <div class="card-body">
+            @if (grammarStatus == null)
+            {
+                <div class="d-flex align-items-center text-muted">
+                    <div class="spinner-border spinner-border-sm me-2" role="status"></div>
+                    <span>Loading Grammar Pipeline status...</span>
+                </div>
+            }
+            else
+            {
+                <div class="row align-items-center">
+                    <div class="col-md-3 mb-3 mb-md-0">
+                        <div class="p-3 border rounded   text-center">
+                            <span class="text-muted d-block small mb-1">Pipeline Status</span>
+                            @if (grammarStatus.Status == "Idle")
+                            {
+                                <span class="badge bg-secondary fs-6"><i class="bi bi-info-circle"></i> Idle</span>
+                            }
+                            else if (grammarStatus.Status == "Ingesting")
+                            {
+                                <span class="badge bg-warning text-dark fs-6"><i class="bi bi-download"></i> Ingesting Treebank</span>
+                            }
+                            else if (grammarStatus.Status == "Mining")
+                            {
+                                <span class="badge bg-primary fs-6"><i class="bi bi-arrow-repeat spin"></i> Mining Rules</span>
+                            }
+                            else if (grammarStatus.Status == "Training")
+                            {
+                                <span class="badge bg-info text-dark fs-6"><i class="bi bi-cpu-fill spin"></i> Training Tagger</span>
+                            }
+                            else if (grammarStatus.Status == "Completed")
+                            {
+                                <span class="badge bg-success fs-6"><i class="bi bi-check-circle"></i> Completed</span>
+                            }
+                            else if (grammarStatus.Status == "Failed")
+                            {
+                                <span class="badge bg-danger fs-6"><i class="bi bi-exclamation-triangle"></i> Failed</span>
+                            }
+                        </div>
+                    </div>
+                    <div class="col-md-6 mb-3 mb-md-0">
+                        @if (grammarStatus.Status == "Ingesting")
+                        {
+                            <div class="mb-1 d-flex justify-content-between small">
+                                <span>Ingesting Dependency Treebank (@(grammarStatus.Progress.ToString("0.0"))%)</span>
+                                <span>@(grammarStatus.ProcessedItems.ToString("N0")) / @(grammarStatus.TotalItems.ToString("N0"))</span>
+                            </div>
+                            <div class="progress" style="height: 15px;">
+                                <div class="progress-bar bg-warning progress-bar-striped progress-bar-animated" role="progressbar" style="width: @(grammarStatus.Progress)%;" aria-valuenow="@(grammarStatus.Progress)" aria-valuemin="0" aria-valuemax="100"></div>
+                            </div>
+                            <small class="text-muted d-block mt-1">Nodes merged: @(grammarStatus.MergedNodes.ToString("N0")) | Relationships merged: @(grammarStatus.MergedEdges.ToString("N0"))</small>
+                        }
+                        else if (grammarStatus.Status == "Mining")
+                        {
+                            <div class="mb-1 d-flex justify-content-between small">
+                                <span>Mining Grammatical Rules Trigger Patterns</span>
+                                <strong>Mining...</strong>
+                            </div>
+                            <div class="progress" style="height: 15px;">
+                                <div class="progress-bar bg-primary progress-bar-striped progress-bar-animated" role="progressbar" style="width: 100%;" aria-valuenow="100" aria-valuemin="0" aria-valuemax="100"></div>
+                            </div>
+                        }
+                        else if (grammarStatus.Status == "Training")
+                        {
+                            <div class="mb-1 d-flex justify-content-between small">
+                                <span>Training ML.NET Sequence Classifier (@(grammarStatus.Progress.ToString("0.0"))%)</span>
+                                <span>Evaluating accuracy...</span>
+                            </div>
+                            <div class="progress" style="height: 15px;">
+                                <div class="progress-bar bg-info progress-bar-striped progress-bar-animated" role="progressbar" style="width: @(grammarStatus.Progress)%;" aria-valuenow="@(grammarStatus.Progress)" aria-valuemin="0" aria-valuemax="100"></div>
+                            </div>
+                        }
+                        else if (grammarStatus.Status == "Completed")
+                        {
+                            <div class="alert alert-success py-2 mb-0">
+                                <i class="bi bi-check-circle-fill"></i> Operation completed successfully. 
+                                @if (grammarStatus.ModelAccuracy > 0)
+                                {
+                                    <span>Model Accuracy: <strong>@( (grammarStatus.ModelAccuracy * 100).ToString("0.00") )%</strong></span>
+                                }
+                            </div>
+                        }
+                        else if (grammarStatus.Status == "Failed")
+                        {
+                            <div class="alert alert-danger py-2 mb-0"><i class="bi bi-exclamation-octagon-fill"></i> Pipeline failed: @(grammarStatus.ErrorMessage)</div>
+                        }
+                        else
+                        {
+                            <p class="text-muted mb-0">Grammar pipeline is currently idle. Select an action below to begin.</p>
+                        }
+                        
+                        @if (grammarStatus.Logs != null && grammarStatus.Logs.Length > 0)
+                        {
+                            <div class="mt-2 p-2 border rounded  " style="max-height: 120px; overflow-y: auto; font-family: monospace; font-size: 0.8rem;">
+                                @foreach (var log in grammarStatus.Logs)
+                                {
+                                    <div class="text-truncate">@log</div>
+                                }
+                            </div>
+                        }
+                    </div>
+                    <div class="col-md-3 text-end">
+                        @if (grammarStatus.Status == "Idle" || grammarStatus.Status == "Completed" || grammarStatus.Status == "Failed")
+                        {
+                            <button class="btn btn-outline-primary w-100 mb-2 btn-sm" @onclick="TriggerGrammarIngest"><i class="bi bi-play-fill"></i> 1. Ingest Treebank</button>
+                            <button class="btn btn-outline-primary w-100 mb-2 btn-sm" @onclick="TriggerGrammarMine"><i class="bi bi-magic"></i> 2. Mine Rules</button>
+                            <button class="btn btn-outline-primary w-100 mb-2 btn-sm" @onclick="TriggerGrammarTrain"><i class="bi bi-cpu"></i> 3. Train Classifier</button>
+                            <button class="btn btn-outline-danger w-100 btn-sm" @onclick="ResetGrammar"><i class="bi bi-trash-fill"></i> Reset Grammar Data</button>
+                        }
+                        else
+                        {
+                            <button class="btn btn-secondary w-100" disabled><i class="bi bi-hourglass-split"></i> Running...</button>
+                        }
+                    </div>
+                </div>
+            }
+        </div>
+    </div>
+
+    <!-- Scraper Jobs Section -->
+    <div class="card shadow-sm mb-4">
+        <div class="card-header bg-dark text-white"><i class="bi bi-cpu-fill"></i> Active Scraper Jobs</div>
+        <div class="card-body">
+            @if (scrapeJobs == null)
+            {
+                <p><em>Loading scraping jobs...</em></p>
+            }
+            else if (!scrapeJobs.Any())
+            {
+                <div class="alert alert-info mb-0">No active scraping jobs found. The worker might be idle.</div>
+            }
+            else
+            {
+                <div class="table-responsive">
+                    <table class="table table-striped table-hover align-middle mb-0">
+                        <thead>
+                            <tr>
+                                <th>Source</th>
+                                <th>Category</th>
+                                <th>Target URL / ID</th>
+                                <th>Pages Processed</th>
+                                <th>Status</th>
+                                <th>Last Updated</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var job in scrapeJobs)
+                            {
+                                <tr>
+                                    <td><strong>@job.SourceName</strong></td>
+                                    <td><span class="badge bg-secondary">Universal</span></td>
+                                    <td>@job.TargetId</td>
+                                    <td><span class="badge bg-primary rounded-pill">@job.LastProcessedIndex</span></td>
+                                    <td>
+                                        @if (job.Status == "InProgress")
+                                        {
+                                            <span class="badge bg-warning text-dark"><i class="bi bi-hourglass-split"></i> In Progress</span>
+                                        }
+                                        else if (job.Status == "Completed")
+                                        {
+                                            <span class="badge bg-success"><i class="bi bi-check-circle"></i> Completed</span>
+                                        }
+                                        else if (job.Status == "Idle")
+                                        {
+                                            <span class="badge bg-secondary"><i class="bi bi-pause-circle"></i> Idle (Queue Empty)</span>
+                                        }
+                                        else
+                                        {
+                                            <span class="badge bg-secondary">@job.Status</span>
+                                        }
+                                    </td>
+                                    <td>@job.LastUpdatedAt.ToLocalTime().ToString("g")</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </div>
+    </div>
+
+    <!-- Configuration Section -->
+    <div class="card shadow-sm mb-5">
+        <div class="card-header bg-dark text-white"><i class="bi bi-gear-fill"></i> Configured Data Sources</div>
+        <div class="card-body">
+            @if (configs == null)
+            {
+                <p>Loading configurations...</p>
+            }
+            else
+            {
+                <div class="table-responsive mb-4">
+                    <table class="table table-sm table-bordered align-middle">
+                        <thead class="table-light">
+                            <tr>
+                                <th>ID</th>
+                                <th>Name</th>
+                                <th>Category</th>
+                                <th>Base URL</th>
+                                <th>Target XPath</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var cfg in configs)
+                            {
+                                <tr>
+                                    <td>@cfg.Id</td>
+                                    <td>@cfg.Name</td>
+                                    <td><span class="badge bg-info text-dark">@cfg.Category</span></td>
+                                    <td><small>@cfg.BaseUrl</small></td>
+                                    <td><code>@cfg.TargetXPath</code></td>
+                                    <td>
+                                        @if(cfg.IsActive) { <span class="badge bg-success mb-1">Active</span> } else { <span class="badge bg-danger mb-1">Disabled</span> }
+                                        <button class="btn btn-sm btn-outline-danger d-block w-100 mt-1" @onclick="() => ResetSource(cfg.Name)" title="Reset this source's data">Reset Data</button>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+
+                <h5>Add New Source</h5>
+                <div class="row g-3 align-items-center">
+                    <div class="col-md-2"><input type="text" class="form-control" placeholder="Name (e.g. Al Arabiya)" @bind="newConfig.Name" /></div>
+                    <div class="col-md-2">
+                        <input type="text" class="form-control" list="categoryOptions" placeholder="Category" @bind="newConfig.Category" />
+                        <datalist id="categoryOptions">
+                            <option value="News"></option>
+                            <option value="Science"></option>
+                            <option value="Medical"></option>
+                            <option value="Finance"></option>
+                            <option value="Literature"></option>
+                            <option value="Sports"></option>
+                            <option value="Slang"></option>
+                            <option value="Religion"></option>
+                            <option value="DailyLife"></option>
+                        </datalist>
+                    </div>
+                    <div class="col-md-3"><input type="text" class="form-control" placeholder="Base URL" @bind="newConfig.BaseUrl" /></div>
+                    <div class="col-md-2"><input type="text" class="form-control" placeholder="XPath (e.g. //div)" @bind="newConfig.TargetXPath" /></div>
+                    <div class="col-md-2"><input type="text" class="form-control" placeholder="Pagination (e.g. ?p=)" @bind="newConfig.PaginationParam" /></div>
+                    <div class="col-md-1">
+                        <button class="btn btn-primary w-100" @onclick="AddSource"><i class="bi bi-plus-lg"></i> Add</button>
+                    </div>
+                </div>
+            }
+        </div>
+    </div>
+
+</div>
+
+@code {
+    private ScrapeJob[]? scrapeJobs;
+    private CategoryStat[]? categoryStats;
+    private SourceStat[]? sourceStats;
+    private DataSourceConfig[]? configs;
+    private DataSourceConfig newConfig = new DataSourceConfig();
+    private ConceptNetStatus? importerStatus;
+    private GrammarStatus? grammarStatus;
+    private System.Threading.Timer? _refreshTimer;
+    private DateTime _lastLoadTime = DateTime.MinValue;
+    private readonly System.Threading.SemaphoreSlim _loadLock = new System.Threading.SemaphoreSlim(1, 1);
+    private int? totalDuplicates = null;
+    private bool isScanningDuplicates = false;
+    private bool isRemovingDuplicates = false;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadData(force: true);
+
+        // Polling remains as a fallback when the worker's hub connection drops.
+        _refreshTimer = new System.Threading.Timer(async _ =>
+        {
+            await InvokeAsync(async () =>
+            {
+                await LoadData(force: true);
+                StateHasChanged();
+            });
+        }, null, TimeSpan.FromSeconds(25), TimeSpan.FromSeconds(25));
+        
+        ProgressService.OnProgressUpdated += HandleProgressUpdated;
+    }
+
+    private void HandleProgressUpdated(string source, int index)
+    {
+        if (scrapeJobs != null)
+        {
+            var job = scrapeJobs.FirstOrDefault(j => j.SourceName == source);
+            if (job != null)
+            {
+                job.LastProcessedIndex = index;
+                job.Status = "InProgress";
+                job.LastUpdatedAt = DateTime.UtcNow;
+            }
+        }
+        
+        InvokeAsync(async () =>
+        {
+            await LoadData(force: true);
+            StateHasChanged();
+        });
+    }
+
+    private async Task LoadData(bool force = false)
+    {
+        if (!force && DateTime.UtcNow - _lastLoadTime < TimeSpan.FromSeconds(10))
+        {
+            return;
+        }
+
+        await _loadLock.WaitAsync();
+        try
+        {
+            if (!force && DateTime.UtcNow - _lastLoadTime < TimeSpan.FromSeconds(10))
+            {
+                return;
+            }
+
+            using var db = DbFactory.CreateDbContext();
+            
+            scrapeJobs = await db.ScrapeJobs.ToArrayAsync();
+            configs = await db.DataSourceConfigs.ToArrayAsync();
+            
+            categoryStats = await db.RawUniversalData
+                .GroupBy(d => d.Category)
+                .Select(g => new CategoryStat { 
+                    Category = g.Key, 
+                    TotalSentences = g.Sum(d => d.SentenceCount),
+                    TotalWords = g.Sum(d => d.WordCount)
+                }).ToArrayAsync();
+                
+            sourceStats = await db.RawUniversalData
+                .GroupBy(d => d.Source)
+                .Select(g => new SourceStat { 
+                    Source = g.Key, 
+                    TotalSentences = g.Sum(d => d.SentenceCount),
+                    TotalRows = g.Count(),
+                    TotalWords = g.Sum(d => (long)d.WordCount)
+                }).ToArrayAsync();
+
+            _lastLoadTime = DateTime.UtcNow;
+
+            // Fetch ConceptNet importer service status
+            try
+            {
+                using var client = HttpClientFactory.CreateClient("ConceptNetImporter");
+                importerStatus = await client.GetFromJsonAsync<ConceptNetStatus>("api/conceptnet/status");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error fetching ConceptNet status: {ex.Message}");
+            }
+
+            // Fetch Grammar pipeline service status
+            try
+            {
+                using var client = HttpClientFactory.CreateClient("GrammarPipeline");
+                grammarStatus = await client.GetFromJsonAsync<GrammarStatus>("api/grammar/status");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error fetching Grammar status: {ex.Message}");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error fetching data: {ex.Message}");
+        }
+        finally
+        {
+            _loadLock.Release();
+        }
+    }
+
+    private async Task AddSource()
+    {
+        if(string.IsNullOrWhiteSpace(newConfig.Name) || string.IsNullOrWhiteSpace(newConfig.BaseUrl)) return;
+        
+        using var db = DbFactory.CreateDbContext();
+        newConfig.IsActive = true;
+        db.DataSourceConfigs.Add(newConfig);
+        await db.SaveChangesAsync();
+        
+        newConfig = new DataSourceConfig(); // reset form
+        await LoadData(force: true);
+    }
+
+    private async Task ResetDatabase()
+    {
+        using var db = DbFactory.CreateDbContext();
+        await db.Database.ExecuteSqlRawAsync("DELETE FROM RawUniversalData");
+        await db.Database.ExecuteSqlRawAsync("DELETE FROM ScrapeJobs");
+        await LoadData(force: true);
+    }
+
+    private async Task ResetSource(string sourceName)
+    {
+        using var db = DbFactory.CreateDbContext();
+        await db.Database.ExecuteSqlRawAsync("DELETE FROM RawUniversalData WHERE Source = {0}", sourceName);
+        await db.Database.ExecuteSqlRawAsync("DELETE FROM ScrapeJobs WHERE SourceName = {0}", sourceName);
+        await LoadData(force: true);
+    }
+
+    private async Task TriggerImport()
+    {
+        try
+        {
+            using var client = HttpClientFactory.CreateClient("ConceptNetImporter");
+            var response = await client.PostAsync("api/conceptnet/import", null);
+            if (response.IsSuccessStatusCode)
+            {
+                await LoadData(force: true);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error triggering import: {ex.Message}");
+        }
+    }
+
+    private async Task ResetConceptNet()
+    {
+        try
+        {
+            using var client = HttpClientFactory.CreateClient("ConceptNetImporter");
+            var response = await client.PostAsync("api/conceptnet/reset", null);
+            if (response.IsSuccessStatusCode)
+            {
+                await LoadData(force: true);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error resetting ConceptNet data: {ex.Message}");
+        }
+    }
+
+    private async Task TriggerGrammarIngest()
+    {
+        try
+        {
+            using var client = HttpClientFactory.CreateClient("GrammarPipeline");
+            var response = await client.PostAsync("api/grammar/ingest", null);
+            if (response.IsSuccessStatusCode)
+            {
+                await LoadData(force: true);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error triggering grammar ingest: {ex.Message}");
+        }
+    }
+
+    private async Task TriggerGrammarMine()
+    {
+        try
+        {
+            using var client = HttpClientFactory.CreateClient("GrammarPipeline");
+            var response = await client.PostAsync("api/grammar/mine", null);
+            if (response.IsSuccessStatusCode)
+            {
+                await LoadData(force: true);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error triggering grammar mine: {ex.Message}");
+        }
+    }
+
+    private async Task TriggerGrammarTrain()
+    {
+        try
+        {
+            using var client = HttpClientFactory.CreateClient("GrammarPipeline");
+            var response = await client.PostAsync("api/grammar/train", null);
+            if (response.IsSuccessStatusCode)
+            {
+                await LoadData(force: true);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error triggering grammar train: {ex.Message}");
+        }
+    }
+
+    private async Task ResetGrammar()
+    {
+        try
+        {
+            using var client = HttpClientFactory.CreateClient("GrammarPipeline");
+            var response = await client.PostAsync("api/grammar/reset", null);
+            if (response.IsSuccessStatusCode)
+            {
+                await LoadData(force: true);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error resetting grammar data: {ex.Message}");
+        }
+    }
+
+    private string FormatBytes(long bytes)
+    {
+        string[] suffixes = { "B", "KB", "MB", "GB", "TB" };
+        int counter = 0;
+        decimal number = bytes;
+        while (Math.Round(number / 1024) >= 1)
+        {
+            number /= 1024;
+            counter++;
+        }
+        return $"{number:0.0} {suffixes[counter]}";
+    }
+
+    public void Dispose()
+    {
+        _refreshTimer?.Dispose();
+        ProgressService.OnProgressUpdated -= HandleProgressUpdated;
+    }
+
+    private async Task ScanForDuplicates()
+    {
+        isScanningDuplicates = true;
+        totalDuplicates = null;
+        StateHasChanged();
+        
+        try
+        {
+            using var db = DbFactory.CreateDbContext();
+            await db.Database.OpenConnectionAsync();
+            using var command = db.Database.GetDbConnection().CreateCommand();
+            
+            command.CommandText = @"
+                SELECT SUM(DuplicateRows) AS TotalDuplicates
+                FROM (
+                    SELECT COUNT(*) - 1 AS DuplicateRows
+                    FROM RawUniversalData
+                    GROUP BY Source, TextContent
+                    HAVING COUNT(*) > 1
+                )";
+                
+            var result = await command.ExecuteScalarAsync();
+            totalDuplicates = (result != DBNull.Value && result != null) ? Convert.ToInt32(result) : 0;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error scanning for duplicates: {ex.Message}");
+            totalDuplicates = 0;
+        }
+        finally
+        {
+            isScanningDuplicates = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task RemoveDuplicates()
+    {
+        isRemovingDuplicates = true;
+        StateHasChanged();
+        
+        try
+        {
+            using var db = DbFactory.CreateDbContext();
+            
+            await db.Database.ExecuteSqlRawAsync(@"
+                DELETE FROM RawUniversalData 
+                WHERE rowid NOT IN (
+                    SELECT MIN(rowid) 
+                    FROM RawUniversalData 
+                    GROUP BY Source, TextContent
+                )");
+                
+            totalDuplicates = 0;
+            await LoadData(force: true);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error removing duplicates: {ex.Message}");
+        }
+        finally
+        {
+            isRemovingDuplicates = false;
+            StateHasChanged();
+        }
+    }
+
+    public class ConceptNetStatus
+    {
+        public string Status { get; set; } = "Idle";
+        public double Progress { get; set; }
+        public long DownloadedBytes { get; set; }
+        public long TotalBytes { get; set; }
+        public long ProcessedLines { get; set; }
+        public long ImportedEdges { get; set; }
+        public string? ErrorMessage { get; set; }
+    }
+
+    public class GrammarStatus
+    {
+        public string Status { get; set; } = "Idle";
+        public double Progress { get; set; }
+        public long ProcessedItems { get; set; }
+        public long TotalItems { get; set; }
+        public long MergedNodes { get; set; }
+        public long MergedEdges { get; set; }
+        public double ModelAccuracy { get; set; }
+        public string? ErrorMessage { get; set; }
+        public string[]? Logs { get; set; }
+    }
+
+    public class CategoryStat
+    {
+        public string Category { get; set; } = string.Empty;
+        public int TotalSentences { get; set; }
+        public int TotalWords { get; set; }
+    }
+
+    public class SourceStat
+    {
+        public string Source { get; set; } = string.Empty;
+        public int TotalSentences { get; set; }
+        public int TotalRows { get; set; }
+        public long TotalWords { get; set; }
+    }
+}
