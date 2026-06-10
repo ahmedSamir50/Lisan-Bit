@@ -1,13 +1,19 @@
 <Solution>
+  <Folder Name="/Solution Items/">
+    <File Path=".editorconfig" />
+  </Folder>
   <Folder Name="/src/">
     <Project Path="DbProbe/DbProbe.csproj" />
     <Project Path="src/LisanBits.AppHost/LisanBits.AppHost.csproj" />
+    <Project Path="src/LisanBits.ConceptNetImporter/LisanBits.ConceptNetImporter.csproj" />
     <Project Path="src/LisanBits.Dashboard/LisanBits.Dashboard.csproj" />
     <Project Path="src/LisanBits.DataPipeline/LisanBits.DataPipeline.csproj" />
-    <Project Path="src/LisanBits.ServiceDefaults/LisanBits.ServiceDefaults.csproj" />
-    <Project Path="src/LisanBits.WebApi/LisanBits.WebApi.csproj" />
-    <Project Path="src/LisanBits.ConceptNetImporter/LisanBits.ConceptNetImporter.csproj" />
     <Project Path="src/LisanBits.GrammarPipeline/LisanBits.GrammarPipeline.csproj" />
+    <Project Path="src/LisanBits.ServiceDefaults/LisanBits.ServiceDefaults.csproj" />
     <Project Path="src/LisanBits.Trainer/LisanBits.Trainer.csproj" />
+    <Project Path="src/LisanBits.WebApi/LisanBits.WebApi.csproj" />
+  </Folder>
+  <Folder Name="/src/Shared/">
+    <Project Path="src/Shared/Shared.Extentions/Shared.Extentions.csproj" Id="52a2bf5c-d23a-41cf-9cec-e140d940b63d" />
   </Folder>
 </Solution>

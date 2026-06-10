@@ -215,27 +215,6 @@ public class Worker : BackgroundService
                     }
                 }
 
-                //var recategorizedRows = await db.Database.ExecuteSqlRawAsync(
-                //    "UPDATE RawUniversalData SET Category = {0} WHERE Source = {1} AND Category = {2}",
-                //    "Sports",
-                //    "Kooora",
-                //    "Slang");
-
-                //if (recategorizedRows > 0)
-                //{
-                //    _logger.LogInformation("Reclassified {RowCount} historical Kooora rows from Slang to Sports.", recategorizedRows);
-                //}
-
-                //// Normalize legacy Nofal source name to match the current DataSourceConfig name
-                //var renamedRows = await db.Database.ExecuteSqlRawAsync(
-                //    "UPDATE RawUniversalData SET Source = {0} WHERE Source = {1}",
-                //    "Nofal Slang (Local CSV)",
-                //    "Egyptian Slang (Nofal)");
-
-                //if (renamedRows > 0)
-                //{
-                //    _logger.LogInformation("Renamed {RowCount} legacy 'Egyptian Slang (Nofal)' rows to 'Nofal Slang (Local CSV)'.", renamedRows);
-                //}
                 
                 // 2. Reset stuck 'Processing' URLs
                 var stuckUrls = await db.CrawledUrlQueue.Where(q => q.Status == "Processing")
@@ -546,42 +525,6 @@ public class Worker : BackgroundService
     // Slang dataset helpers
     // -------------------------------------------------------------------------
 
-    private async Task TryDownloadSlangDatasetIfNeededAsync(CancellationToken ct)
-    {
-        try
-        {
-            using var scope = _serviceProvider.CreateScope();
-            var db = scope.ServiceProvider.GetRequiredService<PipelineDbContext>();
-
-            var source29 = await db.DataSourceConfigs.FirstOrDefaultAsync(c => c.Id == 29, ct);
-            if (source29 == null || !source29.IsActive) return;
-
-            var slangCount = await db.RawUniversalData.CountAsync(r => r.Category == "Slang", ct);
-            if (slangCount >= 2_000_000)
-            {
-                _logger.LogInformation("Slang row count ({Count}) already >= 2 million. Skipping download.", slangCount);
-                return;
-            }
-
-            var localPath = source29.BaseUrl.Replace("file:///", "").Replace('/', Path.DirectorySeparatorChar);
-            var slangDir = Path.Combine(Path.GetDirectoryName(localPath) ?? @"D:\A_S", "nofal_slang");
-            if (Directory.Exists(slangDir) && Directory.GetFiles(slangDir, "*.xlsx").Length > 0)
-            {
-                _logger.LogInformation("Slang dataset directory already present at {Path}.", slangDir);
-                return;
-            }
-
-            var zipPath = Path.Combine(Path.GetDirectoryName(localPath) ?? @"D:\A_S", "two-million-rows-egyptian-datasets.zip");
-            var kaggleUrl = _configuration["SlangDataset:KaggleUrl"]
-                ?? "https://www.kaggle.com/api/v1/datasets/download/mostafanofal/two-million-rows-egyptian-datasets";
-
-            await DownloadAndExtractSlangDatasetAsync(slangDir, zipPath, kaggleUrl, ct);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error in TryDownloadSlangDatasetIfNeededAsync.");
-        }
-    }
 
     private async Task DownloadAndExtractSlangDatasetAsync(string targetDir, string zipPath, string kaggleUrl, CancellationToken ct)
     {
@@ -602,47 +545,6 @@ public class Worker : BackgroundService
         _logger.LogInformation("Slang dataset extracted to {TargetDir}.", targetDir);
     }
 
-    private async Task TryPrepareArbEgyCmpDatasetIfNeededAsync(CancellationToken ct)
-    {
-        try
-        {
-            using var scope = _serviceProvider.CreateScope();
-            var db = scope.ServiceProvider.GetRequiredService<PipelineDbContext>();
-
-            var source30 = await db.DataSourceConfigs.FirstOrDefaultAsync(c => c.Id == 30, ct);
-            if (source30 == null || !source30.IsActive) return;
-
-            var threshold = 2_000_000;
-            int.TryParse(_configuration["SlangDataset:CmpWordsThreshold"], out threshold);
-            if (threshold <= 0) threshold = 2_000_000;
-
-            var existingWords = await db.RawUniversalData
-                .Where(r => r.Source == source30.Name)
-                .SumAsync(r => (long?)r.WordCount, ct) ?? 0L;
-
-            if (existingWords >= threshold)
-            {
-                _logger.LogInformation("{SourceName} words ({Words}) reached threshold ({Threshold}). Skipping prepare.", source30.Name, existingWords, threshold);
-                return;
-            }
-
-            var correctedPath = source30.BaseUrl.Replace("file:///", "").Replace('/', Path.DirectorySeparatorChar);
-            if (File.Exists(correctedPath))
-            {
-                _logger.LogInformation("ARB-EGY-CMP corrected file already present at {Path}.", correctedPath);
-                return;
-            }
-
-            var kaggleUrl = _configuration["SlangDataset:CmpKaggleUrl"]
-                ?? "https://www.kaggle.com/api/v1/datasets/download/mksaad/arb-egy-cmp-corpus";
-
-            await DownloadExtractAndFixArbEgyCmpAsync(correctedPath, kaggleUrl, ct);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error in TryPrepareArbEgyCmpDatasetIfNeededAsync.");
-        }
-    }
 
     private async Task DownloadExtractAndFixArbEgyCmpAsync(string correctedPath, string kaggleUrl, CancellationToken ct)
     {

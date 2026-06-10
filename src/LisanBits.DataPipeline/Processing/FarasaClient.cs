@@ -20,13 +20,13 @@ public class FarasaClient
 
         var result = await response.Content.ReadFromJsonAsync<AnalysisResponse>(cancellationToken: cancellationToken);
         
-        return result?.Tokens ?? new List<TokenAnalysis>();
+        return result?.Tokens ?? [];
     }
 }
 
 public class AnalysisResponse
 {
-    public List<TokenAnalysis> Tokens { get; set; } = new();
+    public List<TokenAnalysis> Tokens { get; set; } = [];
 }
 
 public class TokenAnalysis

@@ -161,6 +161,13 @@ public class FarasaPreprocessingService : BackgroundService
 
                     try
                     {
+                        if (IsNoisyContent(item.TextContent))
+                        {
+                            _logger.LogInformation("Deleting noisy data from RawDataId {Id}", item.Id);
+                            db.RawUniversalData.Remove(item);
+                            continue;
+                        }
+
                         var analysis = await AnalyzeAsync(db, item.TextContent, item.Category, item.Id, stoppingToken);
 
                         var processedData = new ProcessedUniversalData
@@ -387,5 +394,32 @@ public class FarasaPreprocessingService : BackgroundService
             tokens.Add(new FarasaToken { Word = word, Root = root, Pos = pos });
         }
         return tokens;
+    }
+
+    private static bool IsNoisyContent(string content)
+    {
+        if (string.IsNullOrWhiteSpace(content?.Trim())) return true;
+        
+        var normalized = System.Text.RegularExpressions.Regex.Replace(content.Trim(), @"\s+", " ");
+        
+        if (normalized.StartsWith("كل الحقوق محفوظة") ||
+            normalized.StartsWith("All rights reserved") ||
+            normalized.StartsWith("جميع الحقوق محفوظة") ||
+            normalized.StartsWith("تم التصميم والتطوير بواسطة") ||
+            normalized.StartsWith("سؤال من ذكر") ||
+            normalized.StartsWith("سؤال من أنثى"))
+        {
+            return true;
+        }
+
+        if (normalized.Contains("لم يتم العثور على نتائج") ||
+            normalized.Contains("تهدف إلى التثقيف العام فقط") ||
+            normalized.Contains("يشتمل هذا التصنيف على") ||
+            normalized.Contains("تصنيفا فرعيا، من أصل"))
+        {
+            return true;
+        }
+
+        return false;
     }
 }

@@ -22,5 +22,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\LisanBits.ServiceDefaults\LisanBits.ServiceDefaults.csproj" />
+    <ProjectReference Include="..\Shared\Shared.Extentions\Shared.Extentions.csproj" />
   </ItemGroup>
 </Project>

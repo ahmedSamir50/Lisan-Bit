@@ -215,21 +215,26 @@
 ## Epic 1: Data Quality & Input Verification
 *Gatekeeping the data to ensure "Garbage in, Gold out" does not happen.*
 
-- **Task 1.1: The Golden Set (Input)**
-  - Manually curate and verify a "Golden Set" of 50-100 random dictionary entries (e.g., from Shamela or Waseet) that represent perfectly clean data.
-- **Task 1.2: Automated Data Validation Gate (Word-Level Jaccard)**
-  - Implement a script to compare scraped text against original ground truth text.
-  - **Critical Improvement:** Use **Word-Level (Token) Jaccard Similarity** or **Levenshtein Distance** instead of Character-Level sets. (Character-level sets allow permutations like "قلب" and "لقب" to score 100%).
-  - Set a threshold (e.g., Jaccard < 0.5) to automatically discard fuzzy or noisy matches before they enter the training pipeline.
+- **Task 1.0: Data Lineage & Traceability (Schema Update)**
+  - Update `RawUniversalData` to include a `SourceUrl` or `ResourceIdentifier` column. Without this, we cannot trace where a row came from, making automated QA impossible for existing data.
+  - Future scraped data must save its exact origin URL.
+- **Task 1.1: The Golden Set (Input Validation Rules)**
+  - Manually curate a "Golden Set" of 50-100 random dictionary entries **per data source** (e.g., 50 for Shamela, 50 for Waseet, 50 for Wikipedia). 
+  - **The Mapping Mechanism:** The Golden Set will be a separate table or file mapped by `SourceUrl`. 
+  - This acts as the "Ground Truth" to validate *each specific scraper's extraction logic*. Unlike raw scraped data which might accidentally pull HTML noise, sidebars, or truncate definitions, the Golden Set ensures we know exactly what a perfect extraction looks like for that specific website's layout.
+- **Task 1.2: Automated Data Validation Gate (Composite Distance Metric)**
+  - Implement an automated script to compare scraped text against the Golden Set ground truth by joining on `SourceUrl`.
+  - Calculate **Word-Level Jaccard Similarity** (bag of words overlap).
+  - Calculate **Levenshtein Distance** (to capture string edit distance and structural similarity).
+  - Compute a composite average score of both metrics to automatically discard fuzzy or noisy matches before they enter the training pipeline.
 
 ## Epic 2: Model Parameter Tuning & Genus-Awareness
 *Ensuring the model learns fine-grained context and does not overfit to dominant domains.*
 
-- **Task 2.1: Data Stratification (Domain Balancing)**
-  - Ensure training batches have an equal/balanced mix of domains (Medical, Linguistics, Religion, etc.) so that dominant categories (like Religion from Shamela) do not overpower niche ones.
-- **Task 2.2: Domain Tagging**
-  - Introduce explicit Domain Tags during training (e.g., prefixing inputs with `[MED]` or `[REL]`) to guide the model's contextual awareness.
-- **Task 2.3: L2 Regularization (Weight Decay)**
+- **Task 2.1: Context-Aware Self-Attention (Replaces Domain Tags & Stratification)**
+  - Eliminate explicit domain tagging prefixes or strict data stratification (which bottlenecks training sizes to the smallest category). 
+  - Instead, leverage the existing `ContextVector` within `ProcessedUniversalData` and enforce domain bias natively through the model's self-attention mechanism, allowing it to focus on the user's intended topic without throwing away massive amounts of training data.
+- **Task 2.2: L2 Regularization (Weight Decay)**
   - Apply L2 Regularization to the Bit-Math engine to penalize large weights. This stops the model from memorizing loud signals and encourages it to distribute learning across more nuanced, specific features.
 
 ## Epic 3: Profiling Data Quantity (The Learning Curve)
@@ -240,7 +245,7 @@
   - Train on the subset and measure the Training Loss vs. Validation Loss (on a held-out 20% validation set).
 - **Task 3.2: Early Stopping & Capacity Measurement**
   - Plot the Learning Curve (Data Size vs. Validation Loss).
-  - **Correction applied:** Stop adding data or training when **Validation Loss stops decreasing** (the "Knee" or "Elbow"). If Validation Loss is high but Training Loss is low, the model is overfitting, requiring *more data* or stronger regularization. If both plateau, capacity is reached.
+  - Stop adding data or training when **Validation Loss stops decreasing** (the "Knee" or "Elbow"). If Validation Loss is high but Training Loss is low, the model is overfitting, requiring *more data* or stronger regularization. If both plateau, capacity is reached.
 
 ## Epic 4: Model Quality & Accuracy Evaluation
 *Measuring how well the model actually performs after training.*
@@ -248,7 +253,21 @@
 - **Task 4.1: The Golden Set (Output)**
   - Create a dataset of Question-Answer pairs where the answer is a specific Arabic concept or word definition.
 - **Task 4.2: Vector & Semantic Similarity Metrics**
-  - Measure **Cosine Similarity** between the *Model's Output Prediction Vector* and the *Golden Truth Vector* (not just the user input vector).
+  - Measure **Cosine Similarity** between the *Model's Output Prediction Vector* and the *Golden Truth Vector*.
 - **Task 4.3: Generative Metrics & Confidence**
   - Measure **Perplexity** to evaluate the model's confidence and detect hallucinations.
   - Apply **ROUGE** or **BLEU** scores if evaluating generated text definitions to measure semantic alignment with human-written definitions.
+- **Task 4.4: Internal Mechanics & Transformer Evaluation (The Supervisor's Metrics)**
+  - **Parameter Footprint:** Calculate theoretical memory size ($N \times 1.58$ bits for Ternary weights).
+  - **Attention Entropy:** Measure the dispersion of Self-Attention weights to ensure the model isn't suffering from "Attention Collapse" (attending uniformly to everything or collapsing to a single token).
+  - **LayerNorm Variance Tracking:** Monitor activation variance before and after Layer Normalization to prevent gradient vanishing/exploding.
+  - **Residual Flow:** Measure Cosine Similarity between layer inputs and outputs to ensure Transformer blocks are actually learning transformations, not just passing identity.
+  - **Softmax Calibration (ECE):** Calculate Expected Calibration Error to ensure a 90% Softmax probability actually reflects a 90% real-world accuracy. Tune **Temperature ($T$)** based on Perplexity vs. Generation Diversity tradeoffs.
+
+## Epic 5: QA Results & Dashboard Integration
+*Visualizing the health and performance of the data and model pipelines.*
+
+- **Task 5.1: Live QA Metrics Dashboard**
+  - Create a dedicated new page in the `LisanBits.Dashboard` project.
+  - Visualize Jaccard/Levenshtein validation pass rates, Learning Curves (Overfitting/Underfitting alerts), and Output Accuracy metrics.
+  - Provide real-time analysis to the administrator on data quality and model health.

@@ -14,7 +14,7 @@ public class ClauseFrame
 {
     public string GovernorLemma { get; set; } = string.Empty;
     public string GovernorPos { get; set; } = string.Empty;
-    public HashSet<GrammaticalState> SatisfiedRoles { get; } = new();
+    public HashSet<GrammaticalState> SatisfiedRoles { get; } = [];
     public GrammaticalState InheritableState { get; set; } = GrammaticalState.Nominative;
 }
 

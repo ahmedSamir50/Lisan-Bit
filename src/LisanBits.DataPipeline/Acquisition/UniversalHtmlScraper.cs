@@ -38,9 +38,9 @@ public class UniversalHtmlScraper
     public class ScrapeResult 
     {
         /// <summary>Text, sentence count, word count, and resolved taxonomy leaf path (may be null).</summary>
-        public List<(string Text, int Sentences, int Words, string? SubContextPath)> ExtractedData { get; set; } = new();
-        public HashSet<string> DiscoveredUrls { get; set; } = new();
-        public List<LexiconEntry> LexiconEntries { get; set; } = new();
+        public List<(string Text, int Sentences, int Words, string? SubContextPath)> ExtractedData { get; set; } = [];
+        public HashSet<string> DiscoveredUrls { get; set; } = [];
+        public List<LexiconEntry> LexiconEntries { get; set; } = [];
     }
 
     /// <summary>
@@ -115,15 +115,6 @@ public class UniversalHtmlScraper
                                 continue;
                             }
 
-                            if (rowsSkipped < skipRows)
-                            {
-                                rowsSkipped++;
-                                continue;
-                            }
-
-                            if (rowsRead >= chunkSize)
-                                break;
-
                             string? textValue = null;
                             for (int i = 0; i < reader.FieldCount; i++)
                             {
@@ -141,13 +132,23 @@ public class UniversalHtmlScraper
                                 }
                             }
 
-                            if (!string.IsNullOrWhiteSpace(textValue))
+                            // Skip entirely empty rows so they don't count towards chunking
+                            if (string.IsNullOrWhiteSpace(textValue))
+                                continue;
+
+                            if (rowsSkipped < skipRows)
                             {
-                                var processed = ProcessContent(textValue);
-                                if (processed.Sentences > 0)
-                                {
-                                    result.ExtractedData.Add((processed.Text, processed.Sentences, processed.Words, null));
-                                }
+                                rowsSkipped++;
+                                continue;
+                            }
+
+                            if (rowsRead >= chunkSize)
+                                break;
+
+                            var processed = ProcessContent(textValue);
+                            if (processed.Sentences > 0)
+                            {
+                                result.ExtractedData.Add((processed.Text, processed.Sentences, processed.Words, null));
                             }
 
                             rowsRead++;
@@ -173,6 +174,9 @@ public class UniversalHtmlScraper
                     await foreach (var line in ReadLinesAsync(filePath, cancellationToken))
                     {
                         if (isHeader) { isHeader = false; continue; } // skip CSV header
+                        
+                        if (string.IsNullOrWhiteSpace(line)) continue; // skip entirely empty lines
+
                         if (linesSkipped < skipRows) { linesSkipped++; continue; }
                         if (linesRead >= chunkSize) break;
 
@@ -419,11 +423,11 @@ public class UniversalHtmlScraper
                         int bookId = int.Parse(baseMatch.Groups[1].Value);
                         int startPage = bookId switch
                         {
-                            1687 => 40,
-                            7283 => 40,
-                            7030 => 1714,
-                            7028 => 40,
-                            1682 => 55,
+                            1687 => 23,
+                            7283 => 9,
+                            7030 => 125,
+                            7028 => 1,
+                            1682 => 50,
                             150964 => 195,
                             _ => 1
                         };
@@ -502,9 +506,42 @@ public class UniversalHtmlScraper
 
     private (string Text, int Sentences, int Words) ProcessContent(string content)
     {
+        if (IsNoisyContent(content))
+        {
+            return (content, 0, 0); // 0 sentences signals the caller to discard it
+        }
+
         int words = content.Split(new[] { ' ', '\n', '\r', '\t' }, StringSplitOptions.RemoveEmptyEntries).Length;
         int sentences = Regex.Split(content, @"(?<=[\.!\?؟\n])\s+").Length;
         return (content, sentences, words);
+    }
+
+    private bool IsNoisyContent(string content)
+    {
+        if (string.IsNullOrWhiteSpace(content)) return true;
+        
+        // Normalize whitespace to catch cases like "سؤال من      ذكر"
+        var normalized = Regex.Replace(content.Trim(), @"\s+", " ");
+        
+        if (normalized.StartsWith("كل الحقوق محفوظة") ||
+            normalized.StartsWith("All rights reserved") ||
+            normalized.StartsWith("جميع الحقوق محفوظة") ||
+            normalized.StartsWith("تم التصميم والتطوير بواسطة") ||
+            normalized.StartsWith("سؤال من ذكر") ||
+            normalized.StartsWith("سؤال من أنثى"))
+        {
+            return true;
+        }
+
+        if (normalized.Contains("لم يتم العثور على نتائج") ||
+            normalized.Contains("تهدف إلى التثقيف العام فقط") ||
+            normalized.Contains("يشتمل هذا التصنيف على") ||
+            normalized.Contains("تصنيفا فرعيا، من أصل"))
+        {
+            return true;
+        }
+
+        return false;
     }
     private static async IAsyncEnumerable<string> ReadLinesAsync(
         string filePath,
@@ -521,9 +558,11 @@ public class UniversalHtmlScraper
         try
         {
             var uri = new Uri(url);
-            var builder = new UriBuilder(uri);
-            builder.Fragment = ""; // Strip fragment (e.g. #mursal)
-            
+            var builder = new UriBuilder(uri)
+            {
+                Fragment = "" // Strip fragment (e.g. #mursal)
+            };
+
             var path = builder.Path;
             if (path.Length > 1 && path.EndsWith("/"))
             {
