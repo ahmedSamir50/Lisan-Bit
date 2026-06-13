@@ -1,6 +1,8 @@
 # PROJECT DEFINITION: Lisan-Bit (لسان - بتس)
 ## Arabic Linguistic Intelligence via Root-Centric GraphRAG and Quantization-Optimized SLM
 
+Aligned to the locked execution baseline in LISAN_BIT_SINGLE_SOURCE_OF_TRUTH.md.
+
 ### 1. Executive Summary
 Lisan-Bit is an Arabic Linguistic Intelligence system designed for morphology-aware retrieval, grammatical analysis, diacritization, lexical reasoning, and dialect-aware support. It is built to run in compact deployment modes on standard consumer hardware while preserving a stronger Arabic-specific linguistic stack than a generic assistant.
 
@@ -84,8 +86,9 @@ Required baseline behavior:
 - **Quantization path:** FP16 -> INT8 -> INT4 -> 2-bit packed ternary evaluation
 - **Conditional research path:** ternary-from-scratch only if compressed primary path fails quality gates
 - **Training framework:** PyTorch + Accelerate + DeepSpeed for model training and distillation
-- **Inference framework:** .NET runtime with ONNX Runtime as primary path; llama.cpp as optional packaged alternative
-- **TorchSharp role:** limited to prototype or fallback usage, not the primary 457M training path
+- **Inference framework:** .NET runtime with ONNX Runtime as primary path; Ollama/GGUF as secondary runtime path
+- **TorchSharp role:** architecture validation and small-model training in .NET; not the primary 457M training path
+- **.NET-first boundary:** use .NET/C# for all feasible components; Python is limited to 457M model training and one-time embedding model fine-tuning
 
 ### 7. Model Strategy
 The project no longer defines ternary math as the default inference identity of the system.
@@ -176,6 +179,7 @@ Required evaluation families:
 - retrieval-first religious and lexical support that remains bounded by ingested sources
 - compact deployment modes that fit standard consumer hardware
 - successful routing to fine-grained contexts such as `Science/Medicine/Cardiology` instead of only broad families
+- quantization promotion only when quality gates are met (INT8 >= 99% FP16, INT4 >= 97% FP16, 2-bit >= 95% FP16)
 
 ### 13. Current Implementation Status
 The following delivery foundation is already operational:
