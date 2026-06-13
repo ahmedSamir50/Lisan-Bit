@@ -1,7 +1,7 @@
-# Lisan-Bit: Single Source of Truth
+# Lisan-Bit: Single Source of Truth Project Plan
 
 **Date:** 2026-06-14
-**Status:** Locked Execution Baseline (v2 — SSE + Data-Driven Dialect)
+**Status:** Locked Execution Baseline (v3 — Restructured Dependencies + Complete Data Sources)
 
 ---
 
@@ -55,6 +55,7 @@ The primary delivery path is RAG-first, standard-transformer-first, and quantiza
 10. **Training orchestration is .NET-driven** via sidecar pattern: .NET prepares data, launches Python training, monitors progress, and validates results.
 11. **SSE streaming is the primary chat interface.** The `/v1/chat/completions` endpoint defaults to Server-Sent Events streaming with OpenAI-compatible chunk format. Blocking mode remains available as fallback.
 12. **Dialect knowledge is trained, scraped, and AI-generated — never manually curated.** The Egyptian dialect system builds its etymological root maps, morphological reanalysis patterns, and syntactic reordering rules from parallel corpora (MADAR, ARB-EGY-CMP), dialect scraping (Egyptian social media, forums, subtitles), and teacher model generation (Jais/cloud AI). No manual dictionary entry is required for dialect support. The system learns dialect→MSA mappings from data.
+13. **Implementation follows the dependency chain.** Each epic's gate must be passed before the next begins. No parallelization of dependent steps. See Section 19 for the full dependency graph.
 
 ---
 
@@ -105,7 +106,7 @@ User Input
     v
 [3] Dialect Detection + Dialect Reconstruction (Lisan.Dialect — C# + ONNX)
     |   ├── Detection: CNN → dialect label + confidence
-    |   ├── Etymological Root Lookup: trained alignment map (ONNX/SQLite)
+    |   ├── Etymological Root Lookup: trained alignment map (SQLite)
     |   ├── Morphological Reanalysis: pattern-based root derivation for dialect words
     |   └── Syntactic Reordering: learned rewrite rules → MSA reconstruction
     |
@@ -133,7 +134,7 @@ SSE Stream → Client
 
 The entire runtime pipeline is .NET/C#. The only non-.NET component at inference time is the ONNX model file itself (generated from PyTorch training).
 
-### 4.2 Dialect Reconstruction Pipeline (New — Data-Driven)
+### 4.2 Dialect Reconstruction Pipeline
 
 When dialect is detected (step 3), a secondary pipeline reconstructs the MSA equivalent for retrieval and model context:
 
@@ -356,8 +357,6 @@ If PTQ ternary loses > 5% quality AND QoRA recovery fails: activate ternary-from
 | Ollama teacher model (Q4_K_M ~800 MB) | ~800 MB |
 | **CPU total** | **~7,712 MB** (fits in 64 GB) |
 
-**Key: The T1000 4GB can train 458M parameters because DeepSpeed ZeRO-2 offloads all optimizer states and gradients to CPU, gradient checkpointing reduces activation memory by ~87%, and flash attention eliminates O(n²) attention matrix storage. The GPU only holds FP16 weights + reduced activations + CUDA overhead.**
-
 ### 6.4 KV-Cache Quantization
 
 | Mode | KV Format | Rationale |
@@ -413,22 +412,14 @@ GGUF conversion              --->    Ollama / llama.cpp P/Invoke
 
 **Primary teacher: Jais-1.3B served via Ollama on CPU**
 
-Ollama runs the teacher model on CPU using the 64 GB RAM, keeping the T1000 GPU free for student training. This eliminates the need for ONNX conversion of the teacher model.
-
 | Teacher | Model | How Served | Memory |
 |---|---|---|---|
 | Primary | Jais-1.3B (Q4_K_M) | Ollama on CPU | ~800 MB RAM |
 | Secondary | Qwen2-1.5B (Q4_K_M) | Ollama on CPU | ~1,000 MB RAM |
 
-**Setup:**
-
-1. `ollama pull jais` (or convert Jais to GGUF and import into Ollama)
-2. Teacher inference via Ollama REST API from Python training script: `POST http://localhost:11434/api/generate`
-3. Teacher runs on CPU; student training runs on T1000 GPU simultaneously.
-
 **Fallback teacher via cloud API:**
 
-If local teacher quality is insufficient, use free API keys from https://github.com/alistaitsacle/free-llm-api-keys for cloud-based teacher inference (e.g., OpenAI-compatible endpoints). This provides access to larger models (GPT-4-class) for higher-quality distillation. Use this for:
+If local teacher quality is insufficient, use free API keys from https://github.com/alistaitsacle/free-llm-api-keys for cloud-based teacher inference (e.g., OpenAI-compatible endpoints). Use this for:
 
 - Final-phase distillation where teacher quality matters most
 - Generating high-quality Arabic training data (explanations, grammar analyses)
@@ -476,10 +467,6 @@ If local teacher quality is insufficient, use free API keys from https://github.
 
 ### 7.7 Training Throughput and Wall-Time — T1000 4GB
 
-**T1000 throughput estimate:**
-
-The T1000 delivers ~2.5 TFLOPS FP16 (vs ~6.7 TFLOPS for RTX 2060). DeepSpeed ZeRO-2 CPU offloading adds ~30-50% overhead vs pure-GPU training.
-
 | Context | Batch | Grad Accum | Est. Steps/sec | Est. Tokens/sec |
 |---|---:|---:|---:|---:|
 | 2,048 | 1 | 8 | ~0.18 | ~369 |
@@ -495,7 +482,7 @@ The T1000 delivers ~2.5 TFLOPS FP16 (vs ~6.7 TFLOPS for RTX 2060). DeepSpeed ZeR
 | 8K context (40K-70K) | 30,000 | 0.06 | ~500 hours |
 | **Total** | **70,000** | | **~858 hours (~36 days)** |
 
-**Conservative estimate with interruptions:** Plan for **40-45 days of continuous training**. With the 28-week timeline (196 days), this leaves ample room: training runs from Week 11 to approximately Week 17-18.
+**Conservative estimate with interruptions:** Plan for **40-45 days of continuous training**. With the 30-week timeline (210 days), this leaves ample room: training runs from Week 12 to approximately Week 18-19.
 
 **Mitigation if training is too slow:**
 
@@ -517,57 +504,104 @@ The T1000 delivers ~2.5 TFLOPS FP16 (vs ~6.7 TFLOPS for RTX 2060). DeepSpeed ZeR
 L = alpha * KL_div(student_logits/T, teacher_logits/T) + (1-alpha) * CE(student_logits, ground_truth)
 ```
 
-**Teacher inference:** Jais-1.3B via Ollama on CPU (or cloud API). Throughput: ~2-5 batches/sec on CPU, sufficient for student training speed on T1000.
-
 ---
 
 ## 8. Data and Knowledge Foundation
 
-### 8.1 Religious Corpus
+### 8.1 Primary Arabic Linguistic Sources — Shamela.ws
+
+Shamela.ws is the **primary source for classical Arabic linguistic texts**. It provides structured, searchable, machine-accessible Arabic text — not PDF/OCR. The following texts are essential for the knowledge graph, morphological analysis, and grammatical parser:
+
+**Dictionaries (Lexical Foundation):**
+
+| Source | Arabic Title | Shamela URL | Role |
+|---|---|---|---|
+| Al-Qamus Al-Muhit | القاموس المحيط | https://shamela.ws/book/7283 | Classical dictionary; root-based lexical entries |
+| Mukhtar Al-Sihah | مختار الصحاح | https://shamela.ws/book/23193 | Compact dictionary; widely used root-based reference |
+| Tag Al-Aroos | تاج العروس | https://shamela.ws/book/7030 | Comprehensive dictionary; encyclopedic lexical coverage |
+| Al-Waseet | المعجم الوسيط | https://shamela.ws/book/7028 | Modern Arabic dictionary (Arabic Language Academy) |
+| Al-Ain | العين | https://shamela.ws/book/1682 | Earliest Arabic dictionary (Al-Khalil ibn Ahmad); phonological/root-based |
+| Lisan Al-Arab | لسان العرب | Available via almaany.com | Classical dictionary; most comprehensive classical Arabic lexicon |
+| Taimoor Dictionary | معجم تيمور | https://shamela.ws/book/150964 | **Contains dialects and slang**; critical for dialect etymology |
+
+**Grammar References (Syntactic Foundation):**
+
+| Source | Arabic Title | Shamela URL | Role |
+|---|---|---|---|
+| Alfiyyat Ibn Malik | ألفية ابن مالك | https://shamela.ws/book/356 | 1,002 grammatical rules in verse; primary grammar rule source |
+| Qatr Al-Nada | قطر الندى وبل الصدى | https://shamela.ws/book/11376 | Grammar reference by Ibn Hisham; foundational syntax rules |
+| Sharh Shudhur Al-Dhahab | شرح شذور الذهب في معرفة كلام العرب | https://shamela.ws/book/6969 | Ibn Hisham's grammar commentary; detailed syntactic analysis |
+| Al-Kitab (Sibawayh) | الكتاب | https://shamela.ws/book/23018 | Foundational Arabic grammar; earliest systematic grammar treatise |
+
+### 8.2 Religious Corpus
 
 | Source | Content | Access |
 |---|---|---|
-| Tanzil | Verified Quran text | https://tanzil.net/download/ |
-| Sunnah.com | Hadith corpus | https://sunnah.com/ |
-| Quranic Arabic Corpus | Morphological/syntactic annotations | https://corpus.quran.com/ |
-| Tafsir sources | Al-Tabari, Ibn Kathir, Al-Jalalayn | Scraping + manual verification |
+| Tanzil | Verified Quran text (Uthmanic script) | https://tanzil.net/download/ |
+| Quranic Arabic Corpus | Morphological and syntactic annotations of Quran | https://corpus.quran.com/ |
+| Tafsir Al-Tabari | تفسير الطبري | Shamela.ws + scraping |
+| Tafsir Ibn Kathir | تفسير ابن كثير | Shamela.ws + scraping |
+| Tafsir Al-Jalalayn | تفسير الجلالين | Shamela.ws + scraping |
 
-### 8.2 Linguistic Corpus
+**Sunnah.com — All Hadith Books (15+ collections):**
 
-| Source | Content | Access |
+| Book | Arabic Name | URL |
 |---|---|---|
-| Lisan Al-Arab | Classical dictionary | https://www.almaany.com/ |
-| Al-Waseet | Modern dictionary | https://archive.org/ |
-| Mukhtar Al-Sihah | Compact dictionary | Digitized PDF/OCR |
-| Al-Qamus Al-Muhit | Classical dictionary | Digitized editions |
-| Arabic grammar references | Alfiyyat Ibn Malik, Qatr Al-Nada | Digitized editions |
+| Sahih al-Bukhari | صحيح البخاري | https://sunnah.com/bukhari |
+| Sahih Muslim | صحيح مسلم | https://sunnah.com/muslim |
+| Sunan al-Tirmidhi | سنن الترمذي | https://sunnah.com/tirmidhi |
+| Sunan Abu Dawud | سنن أبي داود | https://sunnah.com/abudawud |
+| Sunan al-Nasa'i | سنن النسائي | https://sunnah.com/nasai |
+| Sunan Ibn Majah | سنن ابن ماجه | https://sunnah.com/ibnmajah |
+| Muwatta Malik | موطأ مالك | https://sunnah.com/malik |
+| Riyad as-Salihin | رياض الصالحين | https://sunnah.com/riyadussalihin |
+| Bulugh al-Maram | بلوغ المرام | https://sunnah.com/bulugh |
+| Al-Adab Al-Mufrad | الأدب المفرد | https://sunnah.com/adab |
+| Shama'il Muhammadiyya | الشمائل المحمدية | https://sunnah.com/shamail |
+| Mishkat al-Masabih | مشكاة المصابيح | https://sunnah.com/mishkat |
+| 40 Hadith Nawawi | الأربعون النووية | https://sunnah.com/nawawi40 |
+| 40 Hadith Qudsi | الأحاديث القدسية | https://sunnah.com/qudsi40 |
+| Hisn al-Muslim | حصن المسلم | https://sunnah.com/hisn |
 
 ### 8.3 General Arabic Corpus
 
 | Source | Content | Access |
 |---|---|---|
-| OSCAR Arabic | Web-crawled Arabic | https://oscar-project.org/ |
-| Arabic Wikipedia | Encyclopedic | https://dumps.wikimedia.org/ |
+| OSCAR Arabic | Web-crawled Arabic (filtered) | https://oscar-project.org/ |
+| Arabic Wikipedia | Encyclopedic + category taxonomy | https://dumps.wikimedia.org/ |
 | CC-100 Arabic | Common Crawl filtered | https://data.statmt.org/cc-100/ |
 | Hindawi | Arabic literature | https://www.hindawi.org/ |
 | OPUS | Parallel corpus | https://opus.nlpl.eu/ |
 | MADAR | Dialect corpus (28 cities + MSA) | https://camel.abudhabi.nyu.edu/madar/ |
 
-### 8.4 Dialect-Specific Corpus (New — Data-Driven Pipeline)
+### 8.4 Dialect-Specific Corpus
 
 The dialect subsystem requires three categories of dialect data, all sourced programmatically — no manual dictionary curation.
 
+**Structured Parallel Corpora:**
+
 | Source | Content | Purpose | Access |
 |---|---|---|---|
-| MADAR-28 | Parallel sentences: 28 Arabic city dialects ↔ MSA (12K sentences per city) | Training etymological alignment model + syntactic reordering model | https://camel.abudhabi.nyu.edu/madar/ |
-| ARB-EGY-CMP | Egyptian-MSA comparable/com parallel corpus | Egyptian-specific alignment pairs | Already integrated in pipeline |
-| Nofal dataset | Egyptian Arabic slang and colloquial expressions | Dialect vocabulary + usage patterns | Already integrated in pipeline |
+| MADAR-28 | Parallel sentences: 28 Arabic city dialects ↔ MSA (12K sentences per city) | Training etymological alignment model + syntactic reordering model | https://camel.abudahi.nyu.edu/madar/ |
+| ARB-EGY-CMP | Egyptian-MSA comparable/parallel corpus; **contains Twitter comments and tweets** | Egyptian-specific alignment pairs; dialect vocabulary from social media | Already integrated in pipeline |
+| Nofal dataset | Egyptian Arabic slang and colloquial expressions; **contains Twitter comments and tweets** | Dialect vocabulary + usage patterns from real social media | Already integrated in pipeline |
 | OpenSubtitles (Arabic) | Movie/TV subtitles with dialect mixing | Dialect detection training + colloquial vocabulary | https://opus.nlpl.eu/OpenSubtitles.php |
+
+**Scraped Dialect Data:**
+
+| Source | Content | Purpose | Access |
+|---|---|---|---|
 | Egyptian social media | Twitter/X, Facebook, Reddit Arabic dialect posts | Real-world dialect usage, slang evolution | Scraping (C# pipeline, with quality gates) |
 | Egyptian web forums | MASRrawi, Youm7 comments, Arabic Stack Overflow | Informal Egyptian Arabic patterns | Scraping (C# pipeline) |
+| Taimoor Dictionary (Shamela) | معجم تيمور — **contains dialects and slang entries** | Historical dialect vocabulary with etymological annotations | https://shamela.ws/book/150964 |
+
+**AI-Generated Dialect Data:**
+
+| Source | Content | Purpose | Access |
+|---|---|---|---|
 | AI-generated parallel pairs | Jais/cloud model generates Egyptian→MSA translations | Fill gaps in scraped data; expand coverage | Teacher model (Ollama API) |
 
-### 8.5 Dialect Data Pipeline (New — Trained, Not Manual)
+### 8.5 Dialect Data Pipeline — Trained, Not Manual
 
 **Principle: Every dialect mapping is derived from data or AI generation, never hand-entered.**
 
@@ -577,8 +611,9 @@ The pipeline has four stages that run before the main model training:
 
 ```
 MADAR-28 (336K parallel sentences)
-    + ARB-EGY-CMP (existing)
-    + Nofal slang (existing)
+    + ARB-EGY-CMP (Twitter comments + tweets, existing)
+    + Nofal slang (Twitter comments + tweets, existing)
+    + Taimoor Dictionary dialect entries (Shamela.ws, structured)
     + OpenSubtitles Arabic (dialect-labeled)
     + Scraped Egyptian social media (with dialect detection pre-filtering)
     = Raw parallel corpus
@@ -593,47 +628,28 @@ MADAR-28 (336K parallel sentences)
 
 From the parallel corpus, a statistical alignment model learns dialect-word → MSA-word → root mappings:
 
-1. **Word alignment:** Run fast_align (or EFmarAlign) on Egyptian↔MSA parallel sentences to get word-level correspondences. This is a one-time Python operation (~2 hours on 500K sentences).
-2. **Root projection:** For each aligned (dialect_word, MSA_word) pair, look up the MSA word's root in the Neo4j graph. Assign that root to the dialect word. This produces the etymological root map.
-3. **Pattern derivation:** For each dialect word with an assigned root, attempt morphological pattern matching against known Arabic patterns (فاعل, مفعل, استفعال, etc.). If a pattern matches, record it. If no pattern matches, mark as "irregular" and rely on the neural model for generation.
-4. **Confidence scoring:** Alignments with agreement from multiple sentence pairs get higher confidence. Low-confidence entries are flagged for AI augmentation (Stage 3).
+1. **Word alignment:** Run fast_align (or EFmarAlign) on Egyptian↔MSA parallel sentences to get word-level correspondences. One-time Python operation (~2 hours on 500K sentences).
+2. **Root projection:** For each aligned (dialect_word, MSA_word) pair, look up the MSA word's root in the Neo4j graph. Assign that root to the dialect word.
+3. **Pattern derivation:** For each dialect word with an assigned root, attempt morphological pattern matching against known Arabic patterns. If no pattern matches, mark as "irregular."
+4. **Confidence scoring:** Alignments with agreement from multiple sentence pairs get higher confidence. Low-confidence entries are flagged for AI augmentation.
 
-**Output:** SQLite table `DialectEtymology` with columns: `surface_form`, `dialect`, `etym_root`, `msa_equivalent`, `msa_root`, `derivation_pattern`, `confidence`, `source_count`
-
-**This table is the product of statistical alignment on parallel corpora — not manual entry.**
+**Output:** SQLite table `DialectEtymology` — the product of statistical alignment, not manual entry.
 
 **Stage 3: AI-Augmented Gap Filling (Teacher Model)**
 
 For dialect words that appear in scraped data but lack alignment evidence:
 
 1. Collect unmapped dialect words (frequency >= 5 in scraped corpus).
-2. Batch-send to teacher model (Jais via Ollama or cloud API) with prompt: "For the Egyptian Arabic word 'عايز', provide: (1) the etymological root in Arabic, (2) the MSA equivalent, (3) the morphological pattern if applicable."
-3. Validate AI-generated mappings against known linguistic constraints (root must be valid Arabic triliteral/quadriliteral, pattern must match surface form).
-4. Add validated entries to `DialectEtymology` with `source='ai_generated'` and lower confidence score.
-5. Periodically re-run alignment (Stage 2) as more parallel data accumulates; AI-generated entries with sufficient alignment evidence get their confidence upgraded.
+2. Batch-send to teacher model with etymology prompt.
+3. Validate AI-generated mappings against linguistic constraints.
+4. Add validated entries with `source='ai_generated'` and lower confidence score.
 
 **Stage 4: Syntactic Reordering Model (Trained on Parallel Corpus)**
 
-Syntactic differences between Egyptian and MSA (e.g., post-posed demonstratives, circumfix negation) are learned as transformation rules:
-
-1. **Parse aligned sentence pairs** using Lisan.Syntax (MSA side) and a shallow dependency parser (dialect side).
-2. **Extract transformation patterns** by comparing MSA and dialect dependency structures. Each pattern captures: the dialect construction, the MSA equivalent, and the reordering operation.
-3. **Cluster patterns** by construction type (demonstrative repositioning, negation wrapping, future-prefix substitution, etc.).
-4. **Compile into a rewrite engine** (C#) that applies learned transformations at runtime. The engine stores patterns as data, not hardcoded rules — new patterns can be added by re-running the extraction pipeline on updated parallel data.
-
-**Learned pattern categories (expected from MADAR + ARB-EGY-CMP):**
-
-| Pattern Category | Egyptian Example | MSA Reconstruction | Learned Operation |
-|---|---|---|---|
-| Demonstrative repositioning | المنتج ده | هذا المنتج | Move demonstrative from POST to PRE position |
-| Circumfix negation (ما...ش) | ما ينفعش | لا ينفع | Remove circumfix wrapper → MSA negation particle |
-| Reduced negation (مش) | مش نافع | ليس مفيداً | Replace مش with appropriate MSA negation |
-| Future prefix (هـ) | هروح | سأذهب | Replace هـ prefix with سـ/سوف + map root ر-و-ح → ذ-ه-ب |
-| Compound conjunction | علشان | لأن | Replace compound with MSA conjunction |
-| Adverbial reduction | كده | هكذا | Replace reduced form with full MSA form |
-| Intensifier | أوي | جداً | Replace dialect intensifier with MSA equivalent |
-
-**The rewrite engine learns these patterns from data.** If new dialect patterns are discovered through additional scraping, the extraction pipeline is re-run and the engine's pattern table is updated without code changes.
+1. Parse aligned sentence pairs using Lisan.Syntax (MSA side) and shallow parser (dialect side).
+2. Extract transformation patterns by comparing dependency structures.
+3. Cluster patterns by construction type.
+4. Compile into a rewrite engine (C#) — patterns stored as data, not hardcoded.
 
 ### 8.6 Genus-Aware Corpus Enrichment
 
@@ -652,19 +668,11 @@ Syntactic differences between Egyptian and MSA (e.g., post-posed demonstratives,
 
 No single category exceeding 40% of rows; target minimum 5,000 articles per major domain.
 
-### 8.7 Context Labeling Rules
-
-- Accept text blocks only if they contain at least 7 unique extracted roots.
-- Resolve Arabic Wikipedia categories into English taxonomy paths.
-- Map Arabic news-site breadcrumbs into taxonomy paths before fallback classification.
-- Label Sunnah rows as `Religion/Islam/Hadith` until deeper book-structure routing is available.
-- Persist only English taxonomy leaf paths in `ContextVector`.
-
-### 8.8 Corpus Processing Pipeline (.NET-Native)
+### 8.7 Corpus Processing Pipeline (.NET-Native)
 
 | Step | Operation | .NET Tool |
 |---|---|---|
-| 1 | Download raw data | HttpClient + custom scrapers (C#) |
+| 1 | Download raw data + scrape Shamela.ws | HttpClient + custom scrapers (C#) |
 | 2 | Language identification | Panlingo.LanguageIdentification.FastText (C# NuGet) |
 | 3 | Unicode normalization | Lisan.Tokenizer normalizer (C#) |
 | 4 | Length filtering | Custom filter (C#) |
@@ -710,6 +718,7 @@ The entire corpus processing pipeline runs in .NET. The only external dependency
 - Quranic text verification against Tanzil canonical
 - Morphological annotation cross-checking
 - Dialect data: additional filter for Arabic-script-only, remove bot-generated content
+- Shamela.ws extraction validation: verify structured text quality against known entries
 
 ### 9.5 Learning Curves and Capacity Measurement
 
@@ -772,16 +781,18 @@ The entire corpus processing pipeline runs in .NET. The only external dependency
 
 Required relationships: HAS_ROOT, HAS_PATTERN, HAS_POS, HAS_MEANING, BELONGS_TO, DERIVES_FROM, PRODUCES, SYNONYM_OF, ANTONYM_OF, APPEARS_IN, EXPLAINED_IN, RELATED_ROOT, IN_SYNSET, HAS_SUB_CONTEXT, GOVERNS, DIALECT_MAPS_TO (DialectWord → Word), SHARES_ROOT (DialectWord → Root).
 
-### 10.2 Seeding Priorities
+### 10.2 Seeding Priorities — Logical Dependency Order
 
-1. Dictionary data (Lisan Al-Arab, Al-Waseet)
-2. Quranic annotations (Quranic Arabic Corpus)
-3. Hadith references
-4. Synonym/antonym networks (Arabic WordNet, ConceptNet)
-5. Cross-root relationships
-6. Taxonomy hierarchy (Wikipedia categories)
-7. ConceptNet Arabic edges
-8. Dialect etymological mappings (from trained alignment model — Section 8.5)
+The graph must be seeded in dependency order — dictionaries first (roots + patterns), then Quranic annotations, then cross-references:
+
+1. **Dictionaries** (Al-Qamus Al-Muhit, Mukhtar Al-Sihah, Tag Al-Aroos, Al-Waseet, Al-Ain, Lisan Al-Arab) → Roots, patterns, meanings, word entries
+2. **Dialect dictionary** (Taimoor) → DialectWord nodes with dialect tags
+3. **Quranic annotations** (Quranic Arabic Corpus) → Morphological links, root usage in Quran
+4. **Grammar references** (Alfiyyat Ibn Malik, Qatr Al-Nada, Shudhur Al-Dhahab, Sibawayh) → Grammar rules, syntactic patterns
+5. **Hadith references** (Sunnah.com all 15+ books) → Religious context, vocabulary in context
+6. **Synonym/antonym networks** (Arabic WordNet, ConceptNet) → Semantic relations
+7. **Cross-root relationships** → Derivation chains across roots
+8. **Taxonomy hierarchy** (Wikipedia categories) → Domain classification
 
 ### 10.3 GraphRAG Query Targets
 
@@ -826,11 +837,11 @@ Required relationships: HAS_ROOT, HAS_PATTERN, HAS_POS, HAS_MEANING, BELONGS_TO,
 
 **Tokenizer type:** BPE, vocabulary size 32,768
 
-**Training tool:** `Microsoft.ML.Tokenizers` (C# NuGet, production-ready, supports BPE training via `Bpe.Train()`)
+**Training tool:** `Microsoft.ML.Tokenizers` (C# NuGet)
 
 | Step | Operation | Detail |
 |---|---|---|
-| 1 | Assemble training corpus | OSCAR Arabic (1M docs) + Arabic Wikipedia + linguistic texts + Egyptian dialect corpus (MADAR + Nofal + scraped). Target: 3-5B characters. |
+| 1 | Assemble training corpus | OSCAR Arabic + Wikipedia + linguistic texts + dialect corpus. Target: 3-5B characters. |
 | 2 | Pre-tokenization | Arabic Unicode normalization + split on whitespace/punctuation (C#) |
 | 3 | Character coverage | 0.9995 for Arabic script |
 | 4 | Special tokens | 12 tokens: `<s>`, `</s>`, `<pad>`, `<unk>`, `[CONTEXT]`, `[DIALECT]`, `[MSA-RECON]`, morph/dialect markers. Leaves 32,756 BPE merges. |
@@ -844,15 +855,11 @@ Required relationships: HAS_ROOT, HAS_PATTERN, HAS_POS, HAS_MEANING, BELONGS_TO,
 ### 11.3 Lisan.Syntax (C#)
 
 - Rule-driven parser with Arabic grammar production rules
-- Sources: Quranic Arabic Corpus annotations, Alfiyyat Ibn Malik (1,002 rules), PADT patterns
+- Sources: **Alfiyyat Ibn Malik** (1,002 rules from Shamela.ws), **Qatr Al-Nada** (Shamela.ws), **Shudhur Al-Dhahab** (Shamela.ws), **Sibawayh's Al-Kitab** (Shamela.ws), Quranic Arabic Corpus annotations, PADT patterns
 - Coverage target: 80% MSA, 60% Egyptian
 - Neural fallback for unparseable sentences
 
 ### 11.4 Lisan.Dialect (C#) — Data-Driven Dialect System
-
-The dialect subsystem is entirely data-driven. No manual dictionary curation. All knowledge comes from trained alignment models, parallel corpora, scraping, and AI generation.
-
-**Architecture:**
 
 ```
 Lisan.Dialect
@@ -863,76 +870,23 @@ Lisan.Dialect
 ```
 
 **11.4.1 Detection (5M params, TorchSharp)**
-
-- Character-level CNN (3 conv layers) trained on MADAR + OpenSubtitles + scraped dialect-labeled data
-- Output: dialect label (egyptian, msa, levantine, gulf, other) + confidence score
-- Runtime: < 1 ms/sentence via ONNX
+- Character-level CNN trained on MADAR + OpenSubtitles + scraped dialect-labeled data
 - Target: > 75% on MADAR benchmark
 
 **11.4.2 Etymology — Trained Alignment Map (SQLite)**
-
-The etymological root map is populated by the data pipeline (Section 8.5), not by manual entry:
-
-```
-Input:  "عايز"
-Lookup: SELECT * FROM DialectEtymology WHERE surface_form = 'عايز' AND dialect = 'egyptian'
-Output: etym_root = 'عوز', msa_equivalent = 'أريد', msa_root = 'أرد',
-        derivation_pattern = 'فاعل', confidence = 0.92, source_count = 847
-```
-
 - Built by: word alignment on parallel corpus (Stage 2) + AI augmentation (Stage 3)
-- Updated by: re-running alignment pipeline as new dialect data is scraped
 - Coverage target: > 80% of Egyptian words in MADAR test set
-- Confidence threshold: entries with confidence < 0.5 are treated as "low confidence" and the system prefers neural fallback
+- Confidence threshold: entries with confidence < 0.5 treated as low confidence
 
 **11.4.3 Reconstructor — Learned Rewrite Engine (C#)**
-
-The syntactic reordering engine applies learned transformation patterns:
-
-```csharp
-// Pattern table populated by Section 8.5 Stage 4 extraction
-// NOT hardcoded — patterns come from data
-public class DialectReconstructionEngine
-{
-    private List<TransformationPattern> _patterns; // loaded from SQLite
-
-    public ReconstructionResult Reconstruct(string input, string dialect)
-    {
-        var tokens = Tokenize(input);
-        var msaTokens = new List<ReconstructedToken>();
-
-        foreach (var token in tokens)
-        {
-            // 1. Etymological lookup
-            var etym = _etymology.Lookup(token.Text, dialect);
-
-            // 2. Apply matching transformation patterns
-            var pattern = _patterns.FirstOrDefault(p => p.Matches(token, etym));
-
-            // 3. Reconstruct
-            msaTokens.Add(pattern?.Apply(token, etym) ?? token.AsMSA(etym));
-        }
-
-        return new ReconstructionResult
-        {
-            OriginalDialect = dialect,
-            MSAReconstruction = string.Join(" ", msaTokens.Select(t => t.MSAText)),
-            EtymologicalAnnotations = msaTokens.Select(t => t.Annotation),
-            ReorderingApplied = msaTokens.Any(t => t.WasReordered)
-        };
-    }
-}
-```
-
-The pattern table is a data artifact — it can be regenerated by re-running the extraction pipeline without code changes.
+- Pattern table populated by Section 8.5 Stage 4 extraction
+- Patterns stored as data — new patterns added by re-running extraction pipeline
+- Learned pattern categories: demonstrative repositioning, circumfix negation, reduced negation, future prefix substitution, compound conjunction, adverbial reduction, intensifier substitution, root shift in common verbs, discourse marker shift, aspectual marker, demonstrative reduction, interrogative shift, preposition shift
 
 **11.4.4 Translator — Neural Dialect Generation**
-
-For response generation in the user's dialect (rather than MSA):
-
-- **Primary path:** The 458M model generates in dialect when the prompt includes `[DIALECT: egyptian]` marker. The model learns dialect generation from dialect-rich training data.
-- **Fallback path:** If the model does not support dialect output, the system generates in MSA and applies reverse transformation patterns (MSA→dialect) from the same learned pattern table.
-- **Teacher-assisted path:** For complex dialect expressions, the teacher model (Jais/cloud API) can be queried at build time to generate dialect paraphrases, which are cached for runtime.
+- Primary path: 458M model generates in dialect with `[DIALECT: egyptian]` marker
+- Fallback path: MSA generation + reverse transformation patterns
+- Teacher-assisted path: cached teacher model dialect paraphrases
 
 **11.4.5 Egyptian Dialect — Known Phenomena Coverage**
 
@@ -954,8 +908,6 @@ The following phenomena are expected to be learned from the data pipeline. This 
 | Demonstrative reduction | ده / دي / دول | هذا / هذه / هؤلاء | Phonological pattern matching |
 | Interrogative shift | إيه / إيهما | ماذا / أي | Token-level alignment |
 | Preposition shift | في (meaning "to") | إلى | Context-dependent alignment |
-
-**These are NOT hardcoded rules.** The table above describes the phenomena that the trained alignment model and pattern extractor should discover. If a phenomenon is not present in the training data, it will not be handled — this is a data coverage issue, not a code issue.
 
 ### 11.5 Lisan.Diacritization (C# + ONNX)
 
@@ -1001,8 +953,6 @@ Minimum quality target: 75% acceptable by human review.
 ### 12.4 Embedding Model Specification
 
 **Primary:** Arabertv02 fine-tuned on Arabic NLI + retrieval pairs.
-
-**Fine-tuning:** Done once in Python (no .NET alternative for training transformers). Exported to ONNX and served in .NET via ONNX Runtime for all subsequent inference.
 
 | Step | Tool | Environment |
 |---|---|---|
@@ -1118,11 +1068,9 @@ Headers:
 Body: {
   "model": "lisan-bit",
   "messages": [...],
-  "stream": true,            // default: true
-  "stream_options": {
-    "include_usage": true
-  },
-  "dialect_match": true,     // if true, respond in same dialect as user
+  "stream": true,
+  "stream_options": { "include_usage": true },
+  "dialect_match": true,
   "max_tokens": 2048
 }
 ```
@@ -1136,8 +1084,6 @@ data: {"id":"lisan-abc123","object":"chat.completion.chunk","choices":[{"index":
 
 data: {"id":"lisan-abc123","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":" عايز"},"finish_reason":null}]}
 
-data: {"id":"lisan-abc123","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":" ترجع"},"finish_reason":null}]}
-
 ...
 
 data: {"id":"lisan-abc123","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
@@ -1147,61 +1093,10 @@ data: {"id":"lisan-abc123","object":"chat.completion.chunk","choices":[],"usage"
 data: [DONE]
 ```
 
-**Implementation (ASP.NET Core Minimal API):**
-
-```csharp
-app.MapPost("/v1/chat/completions", async (HttpContext ctx, ChatRequest req,
-    LisanPipeline pipeline) =>
-{
-    if (!req.Stream)
-    {
-        // Blocking mode (fallback)
-        var result = await pipeline.ProcessAsync(req.Messages, req.DialectMatch);
-        return Results.Ok(result);
-    }
-
-    // SSE streaming mode (primary)
-    ctx.Response.ContentType = "text/event-stream";
-    ctx.Response.Headers.Append("Cache-Control", "no-cache");
-    ctx.Response.Headers.Append("Connection", "keep-alive");
-    ctx.Response.Headers.Append("X-Accel-Buffering", "no");
-
-    var completionId = $"lisan-{Guid.NewGuid():N}"[..16];
-
-    // Phase 1: Pre-processing (blocking, ~50-500ms)
-    var preprocessed = await pipeline.PreprocessAsync(req.Messages, req.DialectMatch);
-
-    // Phase 2: Token-by-token generation (SSE stream)
-    await foreach (var chunk in pipeline.ProcessStreamAsync(preprocessed, ctx.RequestAborted))
-    {
-        var sseEvent = JsonSerializer.Serialize(new ChatChunk
-        {
-            Id = completionId,
-            Object = "chat.completion.chunk",
-            Choices = [new() { Index = 0, Delta = new() { Content = chunk }, FinishReason = null }]
-        });
-        await ctx.Response.WriteAsync($"data: {sseEvent}\n\n");
-        await ctx.Response.Body.FlushAsync(ctx.RequestAborted);
-    }
-
-    // Final chunk
-    var finalEvent = JsonSerializer.Serialize(new ChatChunk
-    {
-        Id = completionId,
-        Object = "chat.completion.chunk",
-        Choices = [new() { Index = 0, Delta = new(), FinishReason = "stop" }],
-        Usage = new() { PromptTokens = pipeline.LastPromptTokens, CompletionTokens = pipeline.LastCompletionTokens }
-    });
-    await ctx.Response.WriteAsync($"data: {finalEvent}\n\n");
-    await ctx.Response.WriteAsync("data: [DONE]\n\n");
-    await ctx.Response.Body.FlushAsync(ctx.RequestAborted);
-});
-```
-
 **Streaming pipeline design:**
 
-- **Phase 1 (blocking):** Normalize → Morphology → Dialect Detection + Reconstruction → Retrieval → Context Assembly. This must complete before any token is streamed. Typical latency: 50-500ms.
-- **Phase 2 (streaming):** ONNX Runtime generates one token at a time. Each token is immediately flushed as an SSE chunk. Post-processing (diacritization, dialect adaptation) is applied per-token where possible, or per-word for diacritization.
+- **Phase 1 (blocking):** Normalize → Morphology → Dialect Detection + Reconstruction → Retrieval → Context Assembly. Typical latency: 50-500ms.
+- **Phase 2 (streaming):** ONNX Runtime generates one token at a time. Each token is immediately flushed as an SSE chunk.
 - **First-token latency target:** < 2 seconds on GPU, < 5 seconds on CPU.
 
 ### 14.4 Inference Acceleration
@@ -1241,7 +1136,7 @@ app.MapPost("/v1/chat/completions", async (HttpContext ctx, ChatRequest req,
 | QA-Quran-100 | > 90% | 100 questions with known references |
 | RAG-Retrieval-100 | > 85% | 100 queries, top-3 relevance |
 
-### 15.2 Dialect-Specific Benchmarks (New)
+### 15.2 Dialect-Specific Benchmarks
 
 | Benchmark | Target | Construction |
 |---|---:|---|
@@ -1317,18 +1212,16 @@ app.MapPost("/v1/chat/completions", async (HttpContext ctx, ChatRequest req,
 
 **Auth:** API key via `Authorization: Bearer <key>`. Rate limit: 60 req/min.
 
-**SSE streaming:** Default for `/v1/chat/completions` when `stream: true` (default). Blocking mode available with `stream: false`.
-
 ---
 
 ## 18. Risks and Controls
 
 | Risk | Severity | Control | Fallback |
 |---|---|---|---|
-| T1000 4GB VRAM insufficient for training | Critical | DeepSpeed ZeRO-2 + CPU offload + gradient checkpointing + flash attention | CPU-only training (10x slower but works) |
-| Training too slow on T1000 | High | Reduce steps to 50K; use cloud API teacher for better distillation | Extend timeline to 30 weeks |
-| PyTorch CUDA incompatibility on T1000 | High | Week 1 validation gate; T1000 is CUDA 7.5 which PyTorch supports | CPU-only training |
-| Jais not available in Ollama | Medium | Convert Jais to GGUF and import; or use cloud API teacher | Use Qwen2-1.5B as teacher instead |
+| T1000 4GB VRAM insufficient for training | Critical | DeepSpeed ZeRO-2 + CPU offload + gradient checkpointing + flash attention | CPU-only training (10x slower) |
+| Training too slow on T1000 | High | Reduce steps to 50K; cloud API teacher | Extend timeline to 32 weeks |
+| PyTorch CUDA incompatibility on T1000 | High | Week 1 validation; T1000 is CUDA 7.5 (PyTorch supports) | CPU-only training |
+| Jais not available in Ollama | Medium | Convert Jais to GGUF; cloud API teacher | Use Qwen2-1.5B as teacher |
 | INT4 quality loss > 3% | Medium | Layerwise analysis + QoRA | Ship INT8 default |
 | Training divergence | Medium | Checkpoint rollback + LR reduction | Reduce batch, extend warmup |
 | Template coverage insufficient | Medium | Expand library aggressively | Ship at 60%, iterate |
@@ -1339,192 +1232,257 @@ app.MapPost("/v1/chat/completions", async (HttpContext ctx, ChatRequest req,
 | Vocabulary alignment failures | Medium | Position-ratio fallback | Train without distillation |
 | Cloud API rate limits | Low | Batch requests; cache responses | Use local Ollama teacher only |
 | Corpus contamination | High | Cross-set dedup protocol | Re-split and retrain |
-| Dialect alignment model produces wrong roots | High | Confidence scoring + linguist spot-check on 100 entries | Use AI-generated mappings with lower confidence |
-| Dialect parallel corpus too small | Medium | AI-augmented gap filling via teacher model; expand scraping | Ship with MSA-only fallback for unmapped dialect words |
-| Dialect syntactic reordering errors | Medium | Confidence scoring on transformations; fall back to word-by-word mapping if reordering fails | Skip reordering, use original word order |
-| SSE streaming breaks on slow connections | Low | Buffer management + client-side reconnection logic | Fall back to blocking mode |
-| Dialect training data bias (one dialect dominates) | Medium | Balance constraints: no dialect > 60% of dialect corpus | Downsample dominant dialect |
+| Dialect alignment model produces wrong roots | High | Confidence scoring + linguist spot-check 100 entries | Use AI-generated mappings with lower confidence |
+| Dialect parallel corpus too small | Medium | AI-augmented gap filling; expand scraping | Ship with MSA-only fallback for unmapped words |
+| Dialect syntactic reordering errors | Medium | Confidence scoring; fall back to word-by-word mapping | Skip reordering, use original word order |
+| SSE streaming breaks on slow connections | Low | Buffer management + client-side reconnection | Fall back to blocking mode |
+| Dialect training data bias | Medium | Balance: no dialect > 60% of dialect corpus | Downsample dominant dialect |
+| Shamela.ws scraping blocked or rate-limited | Medium | Respect robots.txt; throttle requests; use cached dumps | Manual download + upload |
 
 ---
 
-## 19. Implementation Epics and Tasks
+## 19. Implementation Epics and Tasks — Logical Dependency Order
+
+**Dependency chain:**
+
+```
+Epic 1: Toolchain
+    ↓
+Epic 2: Data Acquisition + Cleaning
+    ↓
+Epic 3: Knowledge Graph Seeding (needs clean data)
+    ↓
+Epic 4: Morphology + Tokenizer (needs graph for lookups + clean corpus for BPE)
+    ↓
+Epic 5: Dialect Data Pipeline (needs morphology for root projection + parallel corpus)
+    ↓
+Epic 6: NLP Layer (needs morphology + dialect etymology + graph)
+    ↓
+Epic 7: RAG System + SSE (needs NLP + graph + vectors)
+    ↓
+Epic 8: Model Training (needs all above)
+    ↓
+Epic 9: Quantization (needs trained model)
+    ↓
+Epic 10: Runtime Integration + API (needs quantized model + all components)
+    ↓
+Epic 11: Evaluation + Publication (needs complete system)
+```
 
 ### Epic 1: Validation and Toolchain (Week 1)
 
 | Task | Description | Duration | Success Criteria |
 |---|---|---|---|
-| 1.1 | Validate PyTorch + CUDA on T1000 4GB. Run `torch.cuda.is_available()` and a small training loop. | 2 hours | CUDA is available on T1000; training loop runs |
-| 1.2 | Install and validate DeepSpeed ZeRO-2 with CPU offloading. Test with a small model on T1000. | 4 hours | CPU offload works; GPU memory stays within 4 GB budget |
-| 1.3 | Validate flash attention on T1000 (PyTorch 2.0+). | 2 hours | `scaled_dot_product_attention` uses flash kernel on T1000 |
+| 1.1 | Validate PyTorch + CUDA on T1000 4GB. | 2 hours | CUDA available; training loop runs |
+| 1.2 | Install and validate DeepSpeed ZeRO-2 with CPU offloading. | 4 hours | CPU offload works; GPU memory within 4 GB |
+| 1.3 | Validate flash attention on T1000 (PyTorch 2.0+). | 2 hours | `scaled_dot_product_attention` uses flash kernel |
 | 1.4 | Validate TorchSharp CUDA 12.8 in .NET solution on T1000. | 4 hours | Tensor ops on T1000 GPU; model forward pass works |
-| 1.5 | Validate Microsoft.ML.Tokenizers BPE training in C#. | 4 hours | Train a small BPE; encode/decode roundtrip |
+| 1.5 | Validate Microsoft.ML.Tokenizers BPE training in C#. | 4 hours | Train small BPE; encode/decode roundtrip |
 | 1.6 | Validate ONNX Runtime in .NET with CUDA EP on T1000. | 4 hours | Load ONNX model; GPU inference works |
-| 1.7 | Install and validate Ollama. Pull and run Jais or a test model on CPU. | 4 hours | Ollama serves model on CPU; API responds correctly |
+| 1.7 | Install and validate Ollama. Pull and run Jais or test model on CPU. | 4 hours | Ollama serves model on CPU; API responds |
 | 1.8 | Validate Neo4j + FaissNet/HNSW.Net in .NET. | 4 hours | Write/query graph; index and search vectors |
-| 1.9 | Validate Panlingo.FastText + MinHashSharp. | 2 hours | Language ID and MinHash work in C# |
+| 1.9 | Validate Panlingo.FastText + MinHashSharp. | 2 hours | Language ID and MinHash work |
 | 1.10 | Set up Python sidecar: .NET launches Python training, monitors output. | 4 hours | Sidecar pattern works end-to-end |
-| 1.11 | Test cloud API keys from https://github.com/alistaitsacle/free-llm-api-keys. | 2 hours | At least one endpoint responds correctly |
-| 1.12 | Validate fast_align/EFmarAlign for word alignment on a small parallel corpus. | 4 hours | Word alignment produces reasonable results on 1K sentence pairs |
-| 1.13 | Validate SSE streaming in ASP.NET Core minimal API. | 4 hours | SSE endpoint streams tokens; client receives incrementally |
+| 1.11 | Test cloud API keys. | 2 hours | At least one endpoint responds |
+| 1.12 | Validate fast_align/EFmarAlign on small parallel corpus. | 4 hours | Word alignment produces reasonable results |
+| 1.13 | Validate SSE streaming in ASP.NET Core minimal API. | 4 hours | SSE endpoint streams tokens |
+| 1.14 | Validate Shamela.ws scraping: download a book, extract structured text. | 4 hours | Structured Arabic text extracted from Shamela page |
 
-**Gate:** All tools confirmed working on T1000 + Core i9H + 64GB RAM. SSE streaming functional.
+**Gate:** All tools confirmed working on T1000 + Core i9H + 64GB RAM. SSE streaming functional. Shamela scraping functional.
 
-### Epic 2: Corpus and Knowledge Foundation (Weeks 2-4)
-
-| Task | Description | Duration | Success Criteria |
-|---|---|---|---|
-| 2.1 | Ingest Quranic text from Tanzil; verify against canonical. | 4 hours | 100% canonical match |
-| 2.2 | Ingest Hadith from Sunnah sources. | 8 hours | 50K+ records |
-| 2.3 | Ingest OSCAR/CC-100/Wikipedia Arabic. | 16 hours | > 1B tokens raw |
-| 2.4 | Ingest linguistic dictionaries. | 16 hours | 200K+ word entries |
-| 2.5 | Ingest MADAR-28 parallel corpus (Egyptian + 27 other cities). | 8 hours | 336K+ parallel sentence pairs |
-| 2.6 | Ingest ARB-EGY-CMP + Nofal slang (already integrated). | 4 hours | Existing data accessible in pipeline |
-| 2.7 | Scrape Egyptian social media + forums for dialect corpus. | 24 hours | 100K+ Egyptian sentences with quality gates |
-| 2.8 | Language ID + Unicode normalization + length filtering (C#). | 8 hours | All docs pass gates |
-| 2.9 | MinHash deduplication within and across sources (C#). | 8 hours | Near-duplicate < 5% |
-| 2.10 | Train/test/val split with contamination prevention (C#). | 4 hours | < 0.1% n-gram overlap |
-| 2.11 | Morphological annotation via Farasa API (C# client). | 24 hours | All docs annotated |
-| 2.12 | Train BPE tokenizer using Microsoft.ML.Tokenizers (C#), including dialect data. | 8 hours | OOV < 0.01% MSA, < 0.05% Egyptian |
-| 2.13 | Build token alignment map (Lisan BPE ↔ Jais). | 8 hours | > 90% coverage |
-| 2.14 | Seed Neo4j graph with dictionary data. | 16 hours | 200K+ Word nodes |
-| 2.15 | Seed Quranic annotations + cross-references. | 8 hours | All Quranic words linked |
-| 2.16 | Seed ConceptNet Arabic edges. | 8 hours | 100K+ edges |
-| 2.17 | Build taxonomy from Wikipedia categories. | 8 hours | 10+ domains, 5K+ articles each |
-| 2.18 | Curate golden sets: 500+ per source + 200 Egyptian↔MSA pairs. | 24 hours | Stored with identifiers |
-| 2.19 | QA dashboard live with all metrics. | 8 hours | Dashboard operational |
-
-**Gate:** Corpus > 500M tokens. Graph > 200K Word nodes. BPE passes validation. Dialect parallel corpus > 500K pairs.
-
-### Epic 3: Dialect Data Pipeline (Weeks 4-6) — New
+### Epic 2: Data Acquisition and Cleaning (Weeks 2-5)
 
 | Task | Description | Duration | Success Criteria |
 |---|---|---|---|
-| 3.1 | Run fast_align on Egyptian↔MSA parallel corpus (500K+ sentences). | 4 hours | Word alignment output for all pairs |
-| 3.2 | Build etymological root map from aligned pairs + Neo4j root lookup. | 16 hours | SQLite table with > 3,000 Egyptian entries, > 60% MADAR test coverage |
-| 3.3 | Validate etymological map: 100-entry spot check by linguist. | 8 hours | >= 70% correct roots |
-| 3.4 | AI-augmented gap filling: send unmapped words to teacher model. | 16 hours | Additional entries added; total > 5,000 Egyptian entries |
-| 3.5 | Extract syntactic transformation patterns from aligned dependency structures. | 24 hours | Pattern table with >= 10 distinct pattern categories |
-| 3.6 | Validate transformation patterns on 50 Egyptian sentences. | 8 hours | >= 50% correct MSA reconstruction |
-| 3.7 | Seed Neo4j DialectWord nodes from etymological map. | 8 hours | DIALECT_MAPS_TO relationships created |
-| 3.8 | Build dialect etymology confidence scoring. | 4 hours | Confidence scores assigned to all entries |
-| 3.9 | Integration test: end-to-end dialect reconstruction pipeline. | 8 hours | "عايز ارجع المنتج ده" → "أريد إرجاع هذا المنتج" |
+| 2.1 | Scrape and ingest Shamela.ws dictionaries: Al-Qamus Al-Muhit, Mukhtar Al-Sihah, Tag Al-Aroos, Al-Waseet, Al-Ain, Taimoor. | 40 hours | All 6 dictionaries extracted with structured entries (word, root, meaning, pattern) |
+| 2.2 | Scrape and ingest Shamela.ws grammar references: Alfiyyat Ibn Malik, Qatr Al-Nada, Shudhur Al-Dhahab, Sibawayh's Al-Kitab. | 24 hours | All 4 grammar texts extracted with rule annotations |
+| 2.3 | Ingest Quranic text from Tanzil; verify against canonical. | 4 hours | 100% canonical match |
+| 2.4 | Ingest all 15+ Hadith books from Sunnah.com. | 24 hours | All books ingested with metadata (narrator, book, chapter, grade) |
+| 2.5 | Ingest Quranic Arabic Corpus annotations. | 8 hours | Morphological + syntactic annotations loaded |
+| 2.6 | Ingest OSCAR/CC-100/Wikipedia Arabic. | 16 hours | > 1B tokens raw |
+| 2.7 | Ingest Hindawi + OPUS + MADAR. | 16 hours | Literary + parallel + dialect data loaded |
+| 2.8 | Ingest ARB-EGY-CMP + Nofal (Twitter data — already integrated). | 4 hours | Existing data accessible; Twitter comments/tweets identified |
+| 2.9 | Scrape Egyptian social media (Twitter/X, forums). | 24 hours | 100K+ Egyptian sentences with quality gates |
+| 2.10 | Language ID + Unicode normalization + length filtering (C#). | 8 hours | All docs pass gates |
+| 2.11 | MinHash deduplication within and across sources (C#). | 8 hours | Near-duplicate < 5% |
+| 2.12 | Train/test/val split with contamination prevention (C#). | 4 hours | < 0.1% n-gram overlap |
+| 2.13 | Morphological annotation via Farasa API (C# client). | 24 hours | All docs annotated |
+| 2.14 | Curate golden sets: 500+ per source + 200 Egyptian↔MSA pairs. | 24 hours | Stored with identifiers |
+| 2.15 | QA dashboard live with all metrics. | 8 hours | Dashboard operational |
+
+**Gate:** All data sources downloaded, cleaned, deduped, and annotated. Corpus > 500M tokens. Golden sets validated. Dialect parallel corpus > 500K pairs ready.
+
+### Epic 3: Knowledge Graph Seeding (Weeks 5-7)
+
+| Task | Description | Duration | Success Criteria |
+|---|---|---|---|
+| 3.1 | Seed Neo4j with dictionary data from Shamela (Al-Qamus, Mukhtar, Tag Al-Aroos, Al-Waseet, Al-Ain). | 24 hours | 200K+ Word nodes, 6K+ Root nodes, meanings and patterns |
+| 3.2 | Seed Lisan Al-Arab entries (from almaany.com or Shamela). | 16 hours | Comprehensive classical Arabic coverage |
+| 3.3 | Seed Quranic annotations + cross-references from Quranic Arabic Corpus. | 8 hours | All Quranic words linked to roots, patterns, and verses |
+| 3.4 | Seed grammar rules from Alfiyyat Ibn Malik, Qatr Al-Nada, Shudhur Al-Dhahab, Sibawayh. | 16 hours | 1,000+ grammar production rules and syntactic patterns |
+| 3.5 | Seed Hadith references from all 15+ Sunnah.com books. | 16 hours | Hadith entries with narrator chains, grades, book/chapter metadata |
+| 3.6 | Seed ConceptNet Arabic edges. | 8 hours | 100K+ edges |
+| 3.7 | Build taxonomy from Wikipedia categories. | 8 hours | 10+ domains, 5K+ articles each |
+| 3.8 | Seed Taimoor dialect entries as DialectWord nodes. | 8 hours | Dialect words with dialect tags and etymological hints |
+| 3.9 | Validate graph: spot audit 200 Word nodes, 100 Root nodes. | 8 hours | >= 95% correct |
+| 3.10 | Seed synonym/antonym networks (Arabic WordNet). | 8 hours | SYNONYM_OF, ANTONYM_OF relationships |
+
+**Gate:** Graph > 200K Word nodes, 6K+ Root nodes, grammar rules loaded, Hadith linked, taxonomy built. DialectWord nodes from Taimoor present.
+
+### Epic 4: Morphology + Tokenizer (Weeks 7-9)
+
+*Depends on: Epic 3 (graph for dictionary lookups), Epic 2 (clean corpus for BPE training)*
+
+| Task | Description | Duration | Success Criteria |
+|---|---|---|---|
+| 4.1 | Lisan.Morphology: in-memory dictionary lookup from Neo4j export (C#). | 16 hours | < 2 ms/word, > 90% coverage |
+| 4.2 | Lisan.Morphology: pattern-based heuristics (C#). | 16 hours | < 5 ms/word, 80% coverage |
+| 4.3 | Lisan.Morphology: disambiguation (C#). | 16 hours | > 70% correct on ambiguous |
+| 4.4 | Train BPE tokenizer using Microsoft.ML.Tokenizers (C#), including dialect corpus. | 8 hours | OOV < 0.01% MSA, < 0.05% Egyptian |
+| 4.5 | Build token alignment map (Lisan BPE ↔ Jais). | 8 hours | > 90% coverage |
+| 4.6 | Lisan.Tokenizer: BPE encode/decode (C#). | 16 hours | Roundtrip on 10K sentences |
+| 4.7 | Validate morphological feature injection pipeline end-to-end. | 8 hours | Root/Pattern/POS embeddings correctly injected for test sentences |
+
+**Gate:** Morphology > 85% coverage. BPE passes all validation. Token alignment > 90%. Feature injection verified.
+
+### Epic 5: Dialect Data Pipeline (Weeks 9-11)
+
+*Depends on: Epic 4 (morphology for root projection), Epic 2 (parallel corpus), Epic 3 (graph for root lookups)*
+
+| Task | Description | Duration | Success Criteria |
+|---|---|---|---|
+| 5.1 | Run fast_align on Egyptian↔MSA parallel corpus (500K+ sentences). | 4 hours | Word alignment output for all pairs |
+| 5.2 | Build etymological root map from aligned pairs + Neo4j root lookup. | 16 hours | SQLite table with > 3,000 Egyptian entries, > 60% MADAR test coverage |
+| 5.3 | Validate etymological map: 100-entry spot check by linguist. | 8 hours | >= 70% correct roots |
+| 5.4 | AI-augmented gap filling: send unmapped words to teacher model. | 16 hours | Total > 5,000 Egyptian entries |
+| 5.5 | Extract syntactic transformation patterns from aligned dependency structures. | 24 hours | Pattern table with >= 10 distinct pattern categories |
+| 5.6 | Validate transformation patterns on 50 Egyptian sentences. | 8 hours | >= 50% correct MSA reconstruction |
+| 5.7 | Seed Neo4j DialectWord nodes from etymological map. | 8 hours | DIALECT_MAPS_TO relationships created |
+| 5.8 | Build dialect etymology confidence scoring. | 4 hours | Confidence scores assigned to all entries |
+| 5.9 | Integration test: end-to-end dialect reconstruction pipeline. | 8 hours | "عايز ارجع المنتج ده" → "أريد إرجاع هذا المنتج" |
 
 **Gate:** Etymological map covers > 60% of Egyptian test vocabulary. Reconstruction accuracy > 50% on test sentences. No manual entries in the map.
 
-### Epic 4: NLP Layer (Weeks 6-9)
+### Epic 6: NLP Layer (Weeks 11-14)
+
+*Depends on: Epic 4 (morphology), Epic 5 (dialect etymology), Epic 3 (graph)*
 
 | Task | Description | Duration | Success Criteria |
 |---|---|---|---|
-| 4.1 | Lisan.Morphology: dictionary lookup (C#). | 16 hours | < 2 ms/word, > 90% coverage |
-| 4.2 | Lisan.Morphology: pattern heuristics (C#). | 16 hours | < 5 ms/word, 80% coverage |
-| 4.3 | Lisan.Morphology: dialect etymological lookup integration (C#). | 8 hours | Dialect words resolved to roots |
-| 4.4 | Lisan.Morphology: disambiguation (C#). | 16 hours | > 70% correct on ambiguous |
-| 4.5 | Lisan.Tokenizer: BPE encode/decode (C#). | 16 hours | Roundtrip on 10K sentences |
-| 4.6 | Lisan.Syntax: rule-driven parser (C#). | 32 hours | 80% MSA parsing |
-| 4.7 | Lisan.Syntax: case ending prediction (C#). | 16 hours | > 70% on Quranic text |
-| 4.8 | Lisan.Dialect: detection CNN via TorchSharp (C#, train on T1000). | 16 hours | > 75% on MADAR |
-| 4.9 | Lisan.Dialect: etymology lookup module (C#, SQLite). | 8 hours | < 2 ms/word lookup |
-| 4.10 | Lisan.Dialect: reconstruction engine (C#, pattern table). | 16 hours | Syntactic reordering + MSA reconstruction |
-| 4.11 | Lisan.Dialect: end-to-end integration (C#). | 16 hours | "عايز ارجع المنتج ده" → correct MSA + annotations |
-| 4.12 | Lisan.Diacritization: deterministic layer (C#). | 16 hours | > 70% word accuracy |
-| 4.13 | Lisan.Diacritization: neural model via TorchSharp (C#, train on T1000, includes dialect data). | 24 hours | > 92% word accuracy |
-| 4.14 | Integrate diacritization pipeline (C#). | 8 hours | Combined > 85% |
-| 4.15 | Unit tests: > 90% coverage. | 16 hours | All pass |
+| 6.1 | Lisan.Morphology: dialect etymological lookup integration (C#). | 8 hours | Dialect words resolved to roots |
+| 6.2 | Lisan.Syntax: rule-driven parser from Alfiyyat + Qatr Al-Nada + Shudhur + Sibawayh rules (C#). | 32 hours | 80% MSA parsing |
+| 6.3 | Lisan.Syntax: case ending prediction (C#). | 16 hours | > 70% on Quranic text |
+| 6.4 | Lisan.Dialect: detection CNN via TorchSharp (C#, train on T1000). | 16 hours | > 75% on MADAR |
+| 6.5 | Lisan.Dialect: etymology lookup module (C#, SQLite). | 8 hours | < 2 ms/word lookup |
+| 6.6 | Lisan.Dialect: reconstruction engine (C#, pattern table). | 16 hours | Syntactic reordering + MSA reconstruction |
+| 6.7 | Lisan.Dialect: end-to-end integration (C#). | 16 hours | "عايز ارجع المنتج ده" → correct MSA + annotations |
+| 6.8 | Lisan.Diacritization: deterministic layer (C#). | 16 hours | > 70% word accuracy |
+| 6.9 | Lisan.Diacritization: neural model via TorchSharp (C#, includes dialect data). | 24 hours | > 92% word accuracy |
+| 6.10 | Integrate diacritization pipeline (C#). | 8 hours | Combined > 85% |
+| 6.11 | Unit tests: > 90% coverage. | 16 hours | All pass |
 
 **Gate:** NLP libs pass tests. Morphology > 85%. Diacritization > 85%. Dialect reconstruction > 50% on benchmark.
 
-### Epic 5: RAG System (Weeks 9-12)
+### Epic 7: RAG System + SSE Streaming (Weeks 14-17)
+
+*Depends on: Epic 6 (NLP), Epic 3 (graph), Epic 4 (embeddings)*
 
 | Task | Description | Duration | Success Criteria |
 |---|---|---|---|
-| 5.1 | Fine-tune Arabert on MSA + dialect retrieval pairs (Python, one-time) + export to ONNX. | 24 hours | Quality > MiniLM baseline on both MSA and Egyptian queries |
-| 5.2 | Build FaissNet/HNSW.Net index (C#). | 16 hours | Search < 10 ms |
-| 5.3 | GraphRAG query engine: all query types including dual-root dialect queries (C#). | 24 hours | Within latency targets |
-| 5.4 | Morphology-aware query expansion + dialect root expansion (C#). | 8 hours | > 20% more relevant results for dialect queries |
-| 5.5 | Context assembly with tiering + dedup + dialect annotations (C#). | 16 hours | Within budget, no duplicates, dialect markers present |
-| 5.6 | Template-based responses for 8 types including dialect etymology (C#). | 24 hours | 80% query type coverage |
-| 5.7 | End-to-end RAG pipeline (C#). | 16 hours | < 500 ms latency |
-| 5.8 | Graceful degradation (C#). | 8 hours | Never crashes; dialect failure degrades to MSA |
-| 5.9 | RAG-only benchmarks (MSA + dialect). | 16 hours | Meet Section 15.3 + 15.2 targets |
-| 5.10 | All API endpoints including dialect endpoints (C#). | 24 hours | Functional; OpenAPI spec |
-| 5.11 | SSE streaming endpoint for chat (C#). | 16 hours | SSE streams tokens; OpenAI-compatible format |
-| 5.12 | Integration testing. | 8 hours | All pass |
+| 7.1 | Fine-tune Arabert on MSA + dialect retrieval pairs (Python, one-time) + export to ONNX. | 24 hours | Quality > MiniLM baseline on both MSA and Egyptian queries |
+| 7.2 | Build FaissNet/HNSW.Net index (C#). | 16 hours | Search < 10 ms |
+| 7.3 | GraphRAG query engine: all query types including dual-root dialect queries (C#). | 24 hours | Within latency targets |
+| 7.4 | Morphology-aware query expansion + dialect root expansion (C#). | 8 hours | > 20% more relevant results for dialect queries |
+| 7.5 | Context assembly with tiering + dedup + dialect annotations (C#). | 16 hours | Within budget, no duplicates, dialect markers present |
+| 7.6 | Template-based responses for 8 types including dialect etymology (C#). | 24 hours | 80% query type coverage |
+| 7.7 | End-to-end RAG pipeline (C#). | 16 hours | < 500 ms latency |
+| 7.8 | Graceful degradation (C#). | 8 hours | Never crashes; dialect failure degrades to MSA |
+| 7.9 | SSE streaming endpoint for chat (C#). | 16 hours | SSE streams tokens; OpenAI-compatible format |
+| 7.10 | All API endpoints including dialect endpoints (C#). | 24 hours | Functional; OpenAPI spec |
+| 7.11 | RAG-only benchmarks (MSA + dialect). | 16 hours | Meet Section 15.3 + 15.2 targets |
+| 7.12 | Integration testing. | 8 hours | All pass |
 
 **Gate:** RAG-only product shippable with SSE streaming. Template >= 75%, Graph >= 90%. Dialect endpoints functional.
 
-### Epic 6: Model Training (Weeks 11-19)
+### Epic 8: Model Training (Weeks 12-20)
+
+*Depends on: Epic 4 (tokenizer + morph injection), Epic 2 (training data), Epic 7 can run in parallel for RAG-only product*
+
+Note: Model training starts at Week 12 (after BPE + morphology are ready) and runs in parallel with Epics 5-7. The RAG-only product ships independently at the end of Epic 7.
 
 | Task | Description | Duration | Success Criteria |
 |---|---|---|---|
-| 6.1 | Implement model architecture in PyTorch + TorchSharp (dual definition). | 24 hours | Both produce same output on test input |
-| 6.2 | Implement DeepSpeed ZeRO-2 training loop (Python). | 16 hours | Loss decreases; GPU memory stays within 4 GB |
-| 6.3 | Set up Ollama teacher: pull/convert Jais-1.3B, test API from Python. | 8 hours | Teacher logits available via Ollama API |
-| 6.4 | Vocabulary alignment + distillation loss (Python). | 16 hours | > 90% alignment; valid KL loss |
-| 6.5 | Implement .NET training orchestrator sidecar (C#). | 8 hours | .NET launches, monitors, validates training |
-| 6.6 | Phase 1: 2K context, steps 1-10K. | ~55 hours | Smooth loss decrease |
-| 6.7 | Phase 2: 4K context, steps 10K-40K. | ~303 hours | Steady improvement |
-| 6.8 | Phase 3: 8K context, steps 40K-70K. | ~500 hours | Final perplexity < 25 |
-| 6.9 | Ablation: with vs. without morphological injection at step 20K. | 8 hours | Injection improves > 2% |
-| 6.10 | Ablation: with vs. without dialect training data. | 8 hours | Dialect data improves dialect benchmark by > 5% |
-| 6.11 | Learning curve analysis. | 16 hours | Capacity limits identified |
-| 6.12 | Validate checkpoints in TorchSharp (C#). | 8 hours | TorchSharp loads weights; correct output |
-| 6.13 | Export to ONNX + GGUF (for Ollama). | 8 hours | Both formats validated |
-| 6.14 | Full benchmark suite (MSA + dialect). | 16 hours | All Section 15.1 + 15.2 targets met |
-
-**Note on training duration:** Phases 6.6-6.8 total ~858 hours (~36 days). This runs continuously from Week 11 through approximately Week 16-17. The .NET sidecar monitors progress and validates checkpoints automatically.
-
-**Note on dialect training data:** The training corpus includes Egyptian dialect text (MADAR Egyptian side + Nofal + scraped Egyptian) at approximately 15-20% of total tokens. This enables the model to understand and generate dialect text natively.
+| 8.1 | Implement model architecture in PyTorch + TorchSharp (dual definition). | 24 hours | Both produce same output on test input |
+| 8.2 | Implement DeepSpeed ZeRO-2 training loop (Python). | 16 hours | Loss decreases; GPU memory stays within 4 GB |
+| 8.3 | Set up Ollama teacher: pull/convert Jais-1.3B, test API from Python. | 8 hours | Teacher logits available via Ollama API |
+| 8.4 | Vocabulary alignment + distillation loss (Python). | 16 hours | > 90% alignment; valid KL loss |
+| 8.5 | Implement .NET training orchestrator sidecar (C#). | 8 hours | .NET launches, monitors, validates training |
+| 8.6 | Phase 1: 2K context, steps 1-10K. | ~55 hours | Smooth loss decrease |
+| 8.7 | Phase 2: 4K context, steps 10K-40K. | ~303 hours | Steady improvement |
+| 8.8 | Phase 3: 8K context, steps 40K-70K. | ~500 hours | Final perplexity < 25 |
+| 8.9 | Ablation: with vs. without morphological injection at step 20K. | 8 hours | Injection improves > 2% |
+| 8.10 | Ablation: with vs. without dialect training data. | 8 hours | Dialect data improves dialect benchmark > 5% |
+| 8.11 | Learning curve analysis. | 16 hours | Capacity limits identified |
+| 8.12 | Validate checkpoints in TorchSharp (C#). | 8 hours | TorchSharp loads weights; correct output |
+| 8.13 | Export to ONNX + GGUF (for Ollama). | 8 hours | Both formats validated |
+| 8.14 | Full benchmark suite (MSA + dialect). | 16 hours | All Section 15.1 + 15.2 targets met |
 
 **Gate:** FP16 model passes benchmarks. ONNX + GGUF validated. TorchSharp can load and run model. Dialect benchmarks met.
 
-### Epic 7: Quantization (Weeks 19-21)
+### Epic 9: Quantization (Weeks 20-22)
+
+*Depends on: Epic 8 (trained model)*
 
 | Task | Description | Duration | Success Criteria |
 |---|---|---|---|
-| 7.1 | Layerwise sensitivity analysis. | 16 hours | Skip list generated |
-| 7.2 | INT8 quantization + benchmarks. | 8 hours | >= 99% FP16 |
-| 7.3 | INT4 quantization + benchmarks. | 16 hours | >= 97% FP16 |
-| 7.4 | If INT4 < 97%: QoRA recovery. | 24 hours | INT4 + QoRA >= 97% |
-| 7.5 | 2-bit ternary + benchmarks. | 16 hours | >= 95% FP16 |
-| 7.6 | If ternary < 95%: QoRA recovery. | 24 hours | Ternary + QoRA >= 95% |
-| 7.7 | If ternary still < 95%: defer. | 0 hours | Ship INT4 |
-| 7.8 | Package all formats (ONNX + GGUF). | 8 hours | All validated |
-| 7.9 | Dialect benchmark at each quantization level. | 8 hours | Dialect degradation < 2% relative to FP16 |
+| 9.1 | Layerwise sensitivity analysis. | 16 hours | Skip list generated |
+| 9.2 | INT8 quantization + benchmarks. | 8 hours | >= 99% FP16 |
+| 9.3 | INT4 quantization + benchmarks. | 16 hours | >= 97% FP16 |
+| 9.4 | If INT4 < 97%: QoRA recovery. | 24 hours | INT4 + QoRA >= 97% |
+| 9.5 | 2-bit ternary + benchmarks. | 16 hours | >= 95% FP16 |
+| 9.6 | If ternary < 95%: QoRA recovery. | 24 hours | Ternary + QoRA >= 95% |
+| 9.7 | If ternary still < 95%: defer. | 0 hours | Ship INT4 |
+| 9.8 | Package all formats (ONNX + GGUF). | 8 hours | All validated |
+| 9.9 | Dialect benchmark at each quantization level. | 8 hours | Dialect degradation < 2% relative to FP16 |
 
-**Gate:** INT4 passes. INT8 passes. Ternary passes or deferred. Dialect benchmarks remain within tolerance.
+**Gate:** INT4 passes. INT8 passes. Ternary passes or deferred. Dialect benchmarks within tolerance.
 
-### Epic 8: Runtime Integration and API (Weeks 21-25)
+### Epic 10: Runtime Integration and API (Weeks 22-26)
+
+*Depends on: Epic 9 (quantized model), Epic 7 (RAG + SSE)*
 
 | Task | Description | Duration | Success Criteria |
 |---|---|---|---|
-| 8.1 | ONNX Runtime model inference in Lisan.Model (C#). | 16 hours | < 2 sec for 4K on T1000 |
-| 8.2 | SSE streaming integration with ONNX Runtime token generation (C#). | 16 hours | First token < 2 sec; smooth streaming |
-| 8.3 | Full pipeline integration with dialect reconstruction (C#). | 24 hours | Correct Arabic outputs for MSA + Egyptian |
-| 8.4 | `/v1/chat/completions` SSE endpoint (C#). | 16 hours | OpenAI-compatible streaming |
-| 8.5 | `/v1/embeddings` endpoint (C#). | 8 hours | 768-dim embeddings |
-| 8.6 | Dialect API endpoints: detect, reconstruct, translate, etymology (C#). | 16 hours | All functional |
-| 8.7 | Remaining API endpoints (C#). | 16 hours | All functional |
-| 8.8 | Deployment mode switching (C#). | 8 hours | Memory within budget |
-| 8.9 | KV cache quantization for 32K (C#). | 8 hours | 32K fits in 16 GB |
-| 8.10 | Integration testing (C#). | 16 hours | All pass |
-| 8.11 | Performance testing on T1000 + CPU. | 8 hours | Targets met |
-| 8.12 | Security testing. | 8 hours | No vulnerabilities |
-| 8.13 | Docker image. | 8 hours | Starts in < 30 sec |
+| 10.1 | ONNX Runtime model inference in Lisan.Model (C#). | 16 hours | < 2 sec for 4K on T1000 |
+| 10.2 | SSE streaming integration with ONNX Runtime token generation (C#). | 16 hours | First token < 2 sec; smooth streaming |
+| 10.3 | Full pipeline integration with dialect reconstruction (C#). | 24 hours | Correct Arabic outputs for MSA + Egyptian |
+| 10.4 | `/v1/chat/completions` SSE endpoint finalization (C#). | 16 hours | OpenAI-compatible streaming |
+| 10.5 | `/v1/embeddings` endpoint (C#). | 8 hours | 768-dim embeddings |
+| 10.6 | Dialect API endpoints: detect, reconstruct, translate, etymology (C#). | 16 hours | All functional |
+| 10.7 | Remaining API endpoints (C#). | 16 hours | All functional |
+| 10.8 | Deployment mode switching (C#). | 8 hours | Memory within budget |
+| 10.9 | KV cache quantization for 32K (C#). | 8 hours | 32K fits in 16 GB |
+| 10.10 | Integration testing (C#). | 16 hours | All pass |
+| 10.11 | Performance testing on T1000 + CPU. | 8 hours | Targets met |
+| 10.12 | Security testing. | 8 hours | No vulnerabilities |
+| 10.13 | Docker image. | 8 hours | Starts in < 30 sec |
 
 **Gate:** Full system functional. All APIs work including SSE streaming. Performance targets met. Dialect endpoints operational.
 
-### Epic 9: Evaluation and Publication (Weeks 25-28)
+### Epic 11: Evaluation and Publication (Weeks 26-30)
+
+*Depends on: Epic 10 (complete system)*
 
 | Task | Description | Duration | Success Criteria |
 |---|---|---|---|
-| 9.1 | Full benchmark suite (all quantization levels, MSA + dialect). | 24 hours | Results documented |
-| 9.2 | Blind test set evaluation. | 16 hours | Meets acceptance criteria |
-| 9.3 | Evaluation report. | 24 hours | Complete and reviewed |
-| 9.4 | Paper draft. | 40 hours | Ready for submission |
-| 9.5 | User documentation (MSA + dialect features). | 24 hours | Complete |
-| 9.6 | Developer documentation. | 16 hours | Complete |
-| 9.7 | Security audit. | 16 hours | No critical vulnerabilities |
-| 9.8 | Dialect pipeline documentation and re-run instructions. | 8 hours | Complete |
+| 11.1 | Full benchmark suite (all quantization levels, MSA + dialect). | 24 hours | Results documented |
+| 11.2 | Blind test set evaluation. | 16 hours | Meets acceptance criteria |
+| 11.3 | Evaluation report. | 24 hours | Complete and reviewed |
+| 11.4 | Paper draft. | 40 hours | Ready for submission |
+| 11.5 | User documentation (MSA + dialect features). | 24 hours | Complete |
+| 11.6 | Developer documentation. | 16 hours | Complete |
+| 11.7 | Security audit. | 16 hours | No critical vulnerabilities |
+| 11.8 | Dialect pipeline documentation and re-run instructions. | 8 hours | Complete |
 
 ---
 
@@ -1564,8 +1522,6 @@ For Quran, Hadith, Tafsir, and fiqh-adjacent queries:
 ---
 
 ## 21. Backlog Expansion Epics (Post-Baseline)
-
-These epics expand the product beyond the baseline. They do not block the 28-week timeline.
 
 ### Backlog Epic A: Religious Answer Safety Layer
 
@@ -1613,34 +1569,48 @@ These epics expand the product beyond the baseline. They do not block the 28-wee
 
 ## 22. Dataset and Tooling Reference
 
-### Data Sources
+### Data Sources — Complete Catalog
 
-| Resource | Role | Access |
-|---|---|---|
-| Tanzil | Verified Quran | https://tanzil.net/download/ |
-| Sunnah.com | Hadith corpus | https://sunnah.com/ |
-| Lisan Al-Arab | Classical dictionary | https://www.almaany.com/ |
-| Al-Waseet | Modern dictionary | https://archive.org/ |
-| OSCAR Arabic | General corpus | https://oscar-project.org/ |
-| Arabic Wikipedia | Knowledge + ontology | https://dumps.wikimedia.org/ |
-| CC-100 Arabic | General corpus | https://data.statmt.org/cc-100/ |
-| Quranic Arabic Corpus | Morphology + syntax | https://corpus.quran.com/ |
-| MADAR-28 | Dialect parallel corpus (28 cities) | https://camel.abudhabi.nyu.edu/madar/ |
-| ARB-EGY-CMP | Egyptian-MSA parallel | Already integrated |
-| Nofal dataset | Egyptian slang | Already integrated |
-| OpenSubtitles Arabic | Dialect-labeled subtitles | https://opus.nlpl.eu/OpenSubtitles.php |
-| CAMeL Tools | Morphology support | https://camel.abudhabi.nyu.edu/tools/ |
-| Farasa | Preprocessing | https://farasa.qcri.org/ |
-| Jais-1.3B | Primary teacher | https://huggingface.co/inceptionai/jais-1p3b |
-| Qwen2-1.5B | Auxiliary teacher | https://huggingface.co/Qwen/Qwen2-1.5B |
-| Arabert | Embedding model | https://huggingface.co/aubmindlab/bert-base-arabertv02 |
-| XNLI Arabic | NLI data | https://huggingface.co/datasets/xnli |
-| Arabic WordNet | Synonym/antonym | https://globalwordnet.github.io/gwn/ |
-| ConceptNet | Semantic edges | https://conceptnet.io/ |
-| PADT | Syntax training | https://lindat.mff.cuni.cz/ |
-| Hindawi | Arabic literature | https://www.hindawi.org/ |
-| OPUS | Parallel corpus | https://opus.nlpl.eu/ |
-| Free LLM API Keys | Cloud teacher/eval + dialect generation | https://github.com/alistaitsacle/free-llm-api-keys |
+| Resource | Category | Role | Access |
+|---|---|---|---|
+| **Shamela.ws — Dictionaries** | | | |
+| Al-Qamus Al-Muhit | Dictionary | Classical dictionary; root-based lexical entries | https://shamela.ws/book/7283 |
+| Mukhtar Al-Sihah | Dictionary | Compact dictionary; root-based reference | https://shamela.ws/book/23193 |
+| Tag Al-Aroos | Dictionary | Comprehensive dictionary; encyclopedic coverage | https://shamela.ws/book/7030 |
+| Al-Waseet | Dictionary | Modern Arabic dictionary (Arabic Language Academy) | https://shamela.ws/book/7028 |
+| Al-Ain | Dictionary | Earliest Arabic dictionary (Al-Khalil ibn Ahmad) | https://shamela.ws/book/1682 |
+| Taimoor | Dictionary (dialect) | **Contains dialects and slang**; critical for dialect etymology | https://shamela.ws/book/150964 |
+| **Shamela.ws — Grammar** | | | |
+| Alfiyyat Ibn Malik | Grammar | 1,002 grammatical rules in verse | https://shamela.ws/book/356 |
+| Qatr Al-Nada | Grammar | Grammar reference by Ibn Hisham | https://shamela.ws/book/11376 |
+| Shudhur Al-Dhahab | Grammar | Ibn Hisham's syntax commentary | https://shamela.ws/book/6969 |
+| Al-Kitab (Sibawayh) | Grammar | Foundational Arabic grammar treatise | https://shamela.ws/book/23018 |
+| **Other Linguistic** | | | |
+| Lisan Al-Arab | Dictionary | Most comprehensive classical Arabic lexicon | https://www.almaany.com/ |
+| Quranic Arabic Corpus | Annotations | Morphological + syntactic annotations | https://corpus.quran.com/ |
+| ConceptNet | Semantic edges | Synonym/antonym/related concepts | https://conceptnet.io/ |
+| Arabic WordNet | Lexical | Synonym/antonym networks | https://globalwordnet.github.io/gwn/ |
+| PADT | Syntax | Syntax treebank training | https://lindat.mff.cuni.cz/ |
+| **Religious** | | | |
+| Tanzil | Quran | Verified Quran text | https://tanzil.net/download/ |
+| Sunnah.com | Hadith | 15+ Hadith books (Bukhari, Muslim, Tirmidhi, Abu Dawud, Nasa'i, Ibn Majah, Malik, etc.) | https://sunnah.com/ |
+| **General Arabic Corpus** | | | |
+| OSCAR Arabic | General | Web-crawled Arabic (filtered) | https://oscar-project.org/ |
+| Arabic Wikipedia | General | Encyclopedic + taxonomy | https://dumps.wikimedia.org/ |
+| CC-100 Arabic | General | Common Crawl filtered | https://data.statmt.org/cc-100/ |
+| Hindawi | Literature | Arabic literature | https://www.hindawi.org/ |
+| OPUS | Parallel | Parallel corpus | https://opus.nlpl.eu/ |
+| **Dialect** | | | |
+| MADAR-28 | Dialect | Parallel corpus: 28 cities + MSA | https://camel.abudhabi.nyu.edu/madar/ |
+| ARB-EGY-CMP | Dialect (Twitter) | Egyptian-MSA parallel; **Twitter comments and tweets** | Already integrated |
+| Nofal dataset | Dialect (Twitter) | Egyptian slang; **Twitter comments and tweets** | Already integrated |
+| OpenSubtitles Arabic | Dialect | Movie/TV subtitles with dialect mixing | https://opus.nlpl.eu/OpenSubtitles.php |
+| **Model Resources** | | | |
+| Jais-1.3B | Teacher | Primary teacher model | https://huggingface.co/inceptionai/jais-1p3b |
+| Qwen2-1.5B | Teacher | Auxiliary teacher | https://huggingface.co/Qwen/Qwen2-1.5B |
+| Arabert | Embedding | Embedding model for fine-tuning | https://huggingface.co/aubmindlab/bert-base-arabertv02 |
+| XNLI Arabic | NLI | NLI training data | https://huggingface.co/datasets/xnli |
+| Free LLM API Keys | Cloud | Cloud teacher + dialect generation | https://github.com/alistaitsacle/free-llm-api-keys |
 
 ### .NET Tooling
 
@@ -1663,10 +1633,10 @@ These epics expand the product beyond the baseline. They do not block the 28-wee
 
 | Tool | Role | When Used |
 |---|---|---|
-| PyTorch + DeepSpeed | 458M model training | Epic 6 |
-| fast_align / EFmarAlign | Word alignment for dialect etymology | Epic 3 |
-| optimum-cli | ONNX export for embedding model | Epic 5 |
-| Arabert fine-tuning scripts | Embedding model fine-tuning | Epic 5 |
+| PyTorch + DeepSpeed | 458M model training | Epic 8 |
+| fast_align / EFmarAlign | Word alignment for dialect etymology | Epic 5 |
+| optimum-cli | ONNX export for embedding model | Epic 7 |
+| Arabert fine-tuning scripts | Embedding model fine-tuning | Epic 7 |
 
 ---
 
@@ -1682,9 +1652,11 @@ These epics expand the product beyond the baseline. They do not block the 28-wee
 8. Every checkpoint must pass automated regression tests before promotion.
 9. Ollama serves the teacher model on CPU, keeping T1000 GPU free for student training.
 10. Cloud API keys provide fallback teacher and evaluation assistance when needed.
-11. **SSE streaming is the primary chat interface.** The `/v1/chat/completions` endpoint defaults to SSE with OpenAI-compatible format.
-12. **Dialect knowledge is trained, scraped, and AI-generated — never manually curated.** The etymological root map, morphological reanalysis patterns, and syntactic reordering rules are all derived from data pipelines. New dialect data is incorporated by re-running the alignment and extraction pipelines, not by manual entry.
-13. **Dialect reconstruction is best-effort.** If the pipeline cannot reconstruct a dialect word to MSA, the system falls back gracefully: zero-vector for morphology, original text for retrieval, no reordering for syntax. The product is never broken by a dialect mapping miss.
+11. **SSE streaming is the primary chat interface.**
+12. **Dialect knowledge is trained, scraped, and AI-generated — never manually curated.**
+13. **Dialect reconstruction is best-effort.** If the pipeline cannot reconstruct a dialect word to MSA, the system falls back gracefully.
+14. **Shamela.ws is the primary source for classical Arabic texts.** Do not use "Digitized PDF/OCR" when structured text is available from Shamela.
+15. **Implementation follows the dependency chain** (Section 19). No epic starts before its prerequisite epics' gates are passed. The only permitted parallelism is: Epic 8 (model training) can overlap with Epics 5-7 since it depends only on Epic 4 (tokenizer + morphology).
 
 ---
 
@@ -1704,52 +1676,60 @@ These epics expand the product beyond the baseline. They do not block the 28-wee
 
 ### Memory Budget Verification
 
-- INT4 weight: 457,777,280 x 4 bits / 8 = 228,888,640 bytes ≈ 229 MB ✓
-- 2-bit ternary: 457,777,280 x 2 bits / 8 = 114,444,320 bytes ≈ 114 MB + 14 MB scales = 128 MB ✓
-- KV 4K FP16: 4,096 x 16,384 x 2 = 134,217,728 bytes = 128 MB ✓
-- KV 32K INT8: 32,768 x 16,384 x 1 = 536,870,912 bytes = 512 MB ✓
-- Dialect subsystem: 15-25 MB (SQLite etymology table + ONNX alignment model + CNN) ✓
+- INT4 weight: 457,777,280 x 4 bits / 8 ≈ 229 MB ✓
+- 2-bit ternary: ≈ 114 MB + 14 MB scales = 128 MB ✓
+- KV 4K FP16: 128 MB ✓
+- KV 32K INT8: 512 MB ✓
+- Dialect subsystem: 15-25 MB ✓
 
 ### Training Memory Verification — T1000 4GB
 
-- GPU: 916 MB (weights) + 200 MB (activations) + 150 MB (CUDA) = 1,266 MB. **Fits in 4 GB with 2,734 MB headroom.** ✓
-- CPU: 1,832 MB (FP32 master) + 3,664 MB (Adam) + 916 MB (gradients) + 500 MB (DataLoader) + 800 MB (Ollama) = 7,712 MB. **Fits in 64 GB.** ✓
+- GPU: 916 + 200 + 150 = 1,266 MB. **Fits in 4 GB.** ✓
+- CPU: 7,712 MB. **Fits in 64 GB.** ✓
 
 ### Training Time Verification — T1000
 
-- T1000 FP16 throughput: ~2.5 TFLOPS
-- Per token compute: ~0.45 GFLOPs (forward) x 2 (forward+backward) = 0.9 GFLOPs
-- At 2.5 TFLOPS with ~30% utilization (CPU offloading overhead): ~0.75 TFLOPS effective
-- Throughput: 0.75 x 10^9 / 0.9 x 10^9 ≈ 0.83 tokens/sec
-- Total tokens: 70,000 steps x avg 2,048 tokens/step ≈ 143M tokens
-- Time: 143M / 0.83 ≈ 172M sec ≈ 48 hours (compute only)
-- With CPU offloading overhead (~5x): ~240 hours
-- With data loading, validation, checkpointing (~1.5x): ~360 hours ≈ 15 days
-- Conservative with interruptions: **36-45 days** ✓ (fits within Week 11-19 window)
+- Conservative with interruptions: **36-45 days** ✓ (fits within Week 12-20 window)
 
 ### .NET Coverage Verification
 
-19 of 22 components are .NET/C# (86%). The 3 Python components are: (1) 458M training, (2) one-time embedding fine-tuning, and (3) one-time word alignment for dialect etymology. All runtime components are .NET. ✓
+19 of 22 components are .NET/C# (86%). The 3 Python components are: (1) 458M training, (2) one-time embedding fine-tuning, and (3) one-time word alignment. ✓
+
+### Data Source Coverage Verification
+
+- Dictionaries: 7 sources (6 Shamela + Lisan Al-Arab) ✓
+- Grammar: 4 Shamela sources (Alfiyyat, Qatr, Shudhur, Sibawayh) ✓
+- Dialect dictionary: Taimoor (contains dialects + slang) ✓
+- Hadith: 15+ books from Sunnah.com ✓
+- Twitter/dialect data: ARB-EGY-CMP + Nofal (both Twitter-based) ✓
+- No "Digitized PDF/OCR" references for texts available on Shamela ✓
 
 ### Dialect Pipeline Data-Driven Verification
 
-- Etymological root map source: fast_align on MADAR + ARB-EGY-CMP parallel corpus → root projection from Neo4j ✓
-- AI gap-filling source: teacher model (Jais/cloud API) generates entries for unmapped words ✓
-- Syntactic reordering source: dependency structure comparison on aligned parallel sentences ✓
+- Etymological root map source: fast_align on parallel corpus ✓
+- AI gap-filling source: teacher model ✓
+- Syntactic reordering source: dependency structure comparison ✓
 - No manual dictionary entries required ✓
-- Pipeline is re-runnable as more data becomes available ✓
+- Pipeline is re-runnable ✓
 
-### Architecture Size Validation
+### Dependency Chain Verification
 
-458M with morphological injection + Jais distillation should exceed Jais-1.3B quality on Arabic linguistic tasks while being 3x smaller at inference. INT4 deployment fits in 4 GB RAM. Dialect subsystem adds only ~25 MB overhead. ✓
+```
+Epic 1 (Toolchain) → Epic 2 (Data) → Epic 3 (Graph) → Epic 4 (Morph+Tokenizer)
+    → Epic 5 (Dialect Pipeline) → Epic 6 (NLP) → Epic 7 (RAG+SSE)
+    → Epic 10 (Runtime)
+Epic 4 also enables → Epic 8 (Training) → Epic 9 (Quantization) → Epic 10
+Epic 11 (Evaluation) depends on Epic 10
+```
+
+No circular dependencies. Each epic's gate must be passed before dependents start. ✓
 
 ### Timeline Verification
 
-- 9 Epics over 28 weeks (was 26 weeks, expanded for dialect pipeline + SSE)
-- Critical path: Toolchain → Corpus → Dialect Pipeline → NLP Layer → RAG + SSE → Training → Quantization → Runtime → Evaluation
-- Training runs Weeks 11-19 (8 weeks, with 36-45 day training)
-- Dialect pipeline (Epic 3) runs Weeks 4-6, parallel with corpus work
-- SSE streaming integrated in Epic 5 (RAG) and Epic 8 (Runtime)
+- 11 Epics over 30 weeks
+- Critical path: Toolchain → Data → Graph → Morph → Dialect → NLP → RAG → Runtime → Evaluation
+- Training runs Weeks 12-20 (parallel with Epics 5-7)
+- Total: 30 weeks (expanded from 28 due to explicit graph seeding epic + correct data source handling)
 - No manual curation dependencies ✓
 
 ---
@@ -1761,27 +1741,20 @@ These epics expand the product beyond the baseline. They do not block the 28-wee
 ```
 Input: "عايز ارجع المنتج ده"
 
-Step 1: Dialect Detection
-  CNN → Egyptian (94%)
+Step 1: Dialect Detection → Egyptian (94%)
 
 Step 2: Per-Token Etymological Analysis
-  عايز → MSA dict FAIL → Etym map HIT (confidence 0.92):
-         root ع-و-ز, pattern فاعل, MSA أريد (root أ-ر-د) / أحتاج (root ح-و-ج)
+  عايز → Etym map HIT (conf 0.92): root ع-و-ز, pattern فاعل, MSA أريد (root أ-ر-د)
   ارجع → MSA dict HIT: root ر-ج-ع, Form IV
   المنتج → MSA dict HIT: root ن-ت-ج, passive participle
-  ده → MSA dict FAIL → Etym map HIT (confidence 0.96):
-       demonstrative ← reduction of "هذا"
-       Syntactic tag: POST-posed demonstrative
+  ده → Etym map HIT (conf 0.96): demonstrative ← "هذا", POST-posed
 
 Step 3: Syntactic Reordering
-  "المنتج ده" → pattern: DEF_NOUN+DEM → "هذا المنتج"
+  "المنتج ده" → "هذا المنتج"
 
-Step 4: MSA Reconstruction
-  "أريد إرجاع هذا المنتج"
+Step 4: MSA Reconstruction: "أريد إرجاع هذا المنتج"
 
-Step 5: Dual Retrieval
-  Graph roots: {ع-و-ز, أ-ر-د, ح-و-ج, ر-ج-ع, ن-ت-ج}
-  Vector queries: original "عايز ارجع المنتج ده" + MSA "أريد إرجاع هذا المنتج"
+Step 5: Dual Retrieval → roots {ع-و-ز, أ-ر-د, ح-و-ج, ر-ج-ع, ن-ت-ج}
 
 Step 6: Model Generation (SSE, dialect-matched)
   "لو عايز ترجع المنتج ده، ممكن تعمل الآتي..."
@@ -1795,18 +1768,17 @@ Input: "علشان مش نافع معايا"
 Step 1: Dialect Detection → Egyptian (96%)
 
 Step 2: Etymological Analysis
-  علشان → Etym map HIT: conjunction, compound على+شان → MSA لأن/لكي
-  مش → Etym map HIT: negation, reduced من ما+ش → MSA ليس/لا
-  نافع → MSA dict HIT: root ن-ف-ع, active participle → MSA مفيد
-  معايا → Etym map HIT: مع+ي(ـا) → MSA معي
+  علشان → Etym map: compound على+شان → MSA لأن/لكي
+  مش → Etym map: reduced ما+ش → MSA ليس/لا
+  نافع → MSA dict: root ن-ف-ع → MSA مفيد
+  معايا → Etym map: مع+ي(ـا) → MSA معي
 
 Step 3: Syntactic Reordering
-  "مش نافع" → pattern: مش+ADJ → "ليس مفيداً"
+  "مش نافع" → "ليس مفيداً"
 
-Step 4: MSA Reconstruction
-  "لأنه ليس مفيداً معي"
+Step 4: MSA Reconstruction: "لأنه ليس مفيداً معي"
 
-Step 5: Dual Retrieval → roots: {ن-ف-ع, م-ع}
+Step 5: Dual Retrieval → roots {ن-ف-ع, م-ع}
 
 Step 6: Model Generation (SSE, dialect-matched)
   "فاهمك — لو المنتج مش نافع معاك، ممكن ترجعه..."
@@ -1820,20 +1792,17 @@ Input: "كده مش هروح الشغل النهاردة"
 Step 1: Dialect Detection → Egyptian (98%)
 
 Step 2: Etymological Analysis
-  كده → Etym map HIT: reduction of هكذا → MSA هكذا
-  مش → Etym map HIT: negation → MSA لن/لن
-  هروح → Etym map HIT: هـ(future prefix) + ر-و-ح → MSA سأذهب
-         NOTE: root ر-و-ح ≠ MSA ذ-ه-ب (different root entirely!)
-  الشغل → MSA dict HIT: root ش-غ-ل → MSA العمل
-  النهاردة → Etym map HIT: النهار+ة → MSA اليوم
+  كده → Etym map: reduction of هكذا → MSA هكذا
+  مش → Etym map: negation → MSA لن
+  هروح → Etym map: هـ(future) + ر-و-ح → MSA سأذهب (root shift: ر-و-ح ≠ ذ-ه-ب)
+  الشغل → MSA dict: root ش-غ-ل → MSA العمل
+  النهاردة → Etym map: النهار+ة → MSA اليوم
 
-Step 3: Syntactic Reordering
-  "هروح" → future prefix هـ → سـ; root ر-و-ح mapped to MSA ذ-ه-ب
+Step 3: Syntactic Reordering: future prefix هـ → سـ
 
-Step 4: MSA Reconstruction
-  "هكذا لن أذهب إلى العمل اليوم"
+Step 4: MSA Reconstruction: "هكذا لن أذهب إلى العمل اليوم"
 
-Step 5: Dual Retrieval → roots: {ر-و-ح, ذ-ه-ب, ش-غ-ل}
+Step 5: Dual Retrieval → roots {ر-و-ح, ذ-ه-ب, ش-غ-ل}
 
 Step 6: Model Generation (SSE, dialect-matched)
   "يعني مش هتروح الشغل النهاردة؟ خذ راحتك..."
@@ -1847,19 +1816,18 @@ Input: "ما ينفعش أكله ده"
 Step 1: Dialect Detection → Egyptian (93%)
 
 Step 2: Etymological Analysis
-  ما → circumfix negation opener (not standalone word)
-  ينفعش → ي-ن-ف-ع + ش (circumfix closer) → root ن-ف-ع, MSA لا ينفع
-  أكله → أكل + ه (verb + pronoun suffix) → root أ-ك-ل
-  ده → Etym map HIT: demonstrative (POST-posed) ← هذا
+  ما → circumfix negation opener
+  ينفعش → ي-ن-ف-ع + ش → root ن-ف-ع, MSA لا ينفع
+  أكله → أكل + ه → root أ-ك-ل
+  ده → Etym map: demonstrative (POST-posed) ← هذا
 
 Step 3: Syntactic Reordering
-  "ما ينفعش" → pattern: ما+V+ش → "لا ينفع"
-  "أكله ده" → reorder demonstrative → "هذا أكله"
+  "ما ينفعش" → "لا ينفع"
+  "أكله ده" → "هذا أكله"
 
-Step 4: MSA Reconstruction
-  "لا يصلح أكله هذا"
+Step 4: MSA Reconstruction: "لا يصلح أكله هذا"
 
-Step 5: Dual Retrieval → roots: {ن-ف-ع, أ-ك-ل}
+Step 5: Dual Retrieval → roots {ن-ف-ع, أ-ك-ل}
 
 Step 6: Model Generation (SSE, dialect-matched)
   "فعلاً ده مش كويس للأكل — ممكن ترجعه..."
