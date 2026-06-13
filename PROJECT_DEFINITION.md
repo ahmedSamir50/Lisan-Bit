@@ -1,7 +1,7 @@
 # PROJECT DEFINITION: Lisan-Bit (لسان - بتس)
 ## Arabic Linguistic Intelligence via Root-Centric GraphRAG and Quantization-Optimized SLM
 
-Aligned to the locked execution baseline in LISAN_BIT_SINGLE_SOURCE_OF_TRUTH.md.
+Aligned to the locked execution baseline in LISAN_BIT_SINGLE_SOURCE_OF_TRUTH.md (v2 — SSE + Data-Driven Dialect).
 
 ### 1. Executive Summary
 Lisan-Bit is an Arabic Linguistic Intelligence system designed for morphology-aware retrieval, grammatical analysis, diacritization, lexical reasoning, and dialect-aware support. It is built to run in compact deployment modes on standard consumer hardware while preserving a stronger Arabic-specific linguistic stack than a generic assistant.
@@ -40,7 +40,7 @@ Primary capabilities:
 - diacritization with deterministic plus neural refinement
 - lexical and etymological explanation
 - Quranic, Hadith, Tafsir, and dictionary-grounded retrieval
-- dialect-aware handling, especially Egyptian Arabic and MSA
+- Dialect-aware handling with deep Egyptian Arabic support: etymological root mapping, morphological reanalysis, syntactic reordering, and dialect-matched response generation
 
 Primary non-goals:
 - competing directly with frontier LLMs on broad general chat
@@ -66,20 +66,20 @@ Required baseline behavior:
 - **Dashboard:** Blazor-based operational and QA monitoring
 
 #### B. Native Arabic NLP Layer
-- **Tokenizer:** Arabic normalization, sentence splitting, morphology-aware segmentation, 32K BPE tokenization
-- **Morphology:** root, pattern, lemma, POS, and disambiguation support
+- **Tokenizer:** Arabic normalization, sentence splitting, morphology-aware segmentation, 32K BPE tokenization (includes dialect vocabulary; OOV < 0.05% on Egyptian)
+- **Morphology:** root, pattern, lemma, POS, disambiguation, and dialect etymological lookup
 - **Syntax:** grammar-aware parsing and structural validation
-- **Dialect:** Egyptian/MSA handling and dialect detection
+- **Dialect (data-driven):** detection CNN, trained etymological root map (SQLite, built from MADAR + ARB-EGY-CMP alignment), learned syntactic rewrite engine, and dialect-matched response generation. No manual dictionary curation — all mappings derived from parallel corpora, scraping, and AI generation.
 
 #### C. Knowledge and Persistence Layer
-- **Neo4j:** root-centric graph, lexical relations, contextual taxonomy, and source-linked knowledge retrieval
-- **SQLite + EF Core:** ingestion state, raw and processed corpus persistence, checkpoints, and QA traceability
+- **Neo4j:** root-centric graph, lexical relations, contextual taxonomy, source-linked knowledge retrieval, and DialectWord nodes with DIALECT_MAPS_TO / SHARES_ROOT relationships
+- **SQLite + EF Core:** ingestion state, raw and processed corpus persistence, checkpoints, QA traceability, and dialect etymology table (surface_form → etym_root → msa_equivalent)
 - **Context storage:** English taxonomy leaf paths only, with scalar weights
 
 #### D. Retrieval Layer
-- **GraphRAG:** root, pattern, meaning, synonym, domain, and source traversal via Neo4j
-- **Vector retrieval:** semantic search over indexed corpus passages
-- **Context assembly:** tiered retrieval budgets at 4K, 8K, 16K, and 32K
+- **GraphRAG:** root, pattern, meaning, synonym, domain, and source traversal via Neo4j; dual-root queries for dialect (dialect etymological root + MSA root)
+- **Vector retrieval:** semantic search over indexed corpus passages; dual-query for dialect (original dialect text + reconstructed MSA)
+- **Context assembly:** tiered retrieval budgets at 4K, 8K, 16K, and 32K; dialect reconstruction annotations and `[DIALECT]` / `[MSA-RECON]` context markers included
 
 #### E. Model Layer
 - **Primary model path:** standard FP16 transformer with morphological feature injection
@@ -87,8 +87,9 @@ Required baseline behavior:
 - **Conditional research path:** ternary-from-scratch only if compressed primary path fails quality gates
 - **Training framework:** PyTorch + Accelerate + DeepSpeed for model training and distillation
 - **Inference framework:** .NET runtime with ONNX Runtime as primary path; Ollama/GGUF as secondary runtime path
-- **TorchSharp role:** architecture validation and small-model training in .NET; not the primary 457M training path
-- **.NET-first boundary:** use .NET/C# for all feasible components; Python is limited to 457M model training and one-time embedding model fine-tuning
+- **TorchSharp role:** architecture validation and small-model training in .NET (dialect detection CNN, diacritization model, grammatical tagger); not the primary 458M training path
+- **.NET-first boundary:** use .NET/C# for all feasible components; Python is limited to: (a) 458M model training, (b) one-time embedding model fine-tuning, and (c) one-time word alignment for dialect etymology. All runtime components are .NET.
+- **SSE streaming:** `/v1/chat/completions` defaults to Server-Sent Events with OpenAI-compatible chunk format; blocking mode available as fallback
 
 ### 7. Model Strategy
 The project no longer defines ternary math as the default inference identity of the system.
@@ -116,9 +117,15 @@ This makes the plan safer, more measurable, and more aligned with available comp
 - CC-100 Arabic
 - news, literature, and domain-specific corpora
 
-#### C. Dialect and Slang Sources
-- Nofal dataset
-- ARB-EGY-CMP and similar Egyptian Arabic resources
+#### C. Dialect and Slang Sources (Data-Driven Pipeline)
+- MADAR-28: parallel sentences across 28 Arabic city dialects and MSA (primary alignment training source)
+- ARB-EGY-CMP: Egyptian-MSA parallel corpus (already integrated)
+- Nofal dataset: Egyptian Arabic slang and colloquial expressions (already integrated)
+- OpenSubtitles Arabic: dialect-labeled movie/TV subtitles
+- Egyptian social media and web forums: scraped via C# pipeline with quality gates
+- AI-generated parallel pairs: teacher model (Jais/cloud API) fills vocabulary gaps
+
+**Dialect data principle:** Every dialect mapping is derived from data or AI generation — never manually entered. The etymological root map, morphological reanalysis patterns, and syntactic reordering rules are products of statistical alignment on parallel corpora. New dialect data is incorporated by re-running the pipeline, not by code changes.
 
 #### D. Coverage Policy
 - no single context family should dominate the corpus beyond the defined balance thresholds
@@ -131,17 +138,19 @@ This makes the plan safer, more measurable, and more aligned with available comp
 #### Step 1: Query Understanding
 - normalize input text
 - extract morphology and roots
+- detect dialect; if dialect detected, run reconstruction pipeline (etymological root lookup → syntactic reordering → MSA reconstruction)
 - classify domain, intent, and dialect
 
 #### Step 2: Grounded Retrieval
-- query the graph for roots, meanings, patterns, related words, and context
-- query the vector index for semantically similar passages
-- merge and rank evidence according to context tier
+- for dialect queries: run graph and vector retrieval with both dialect etymological roots and reconstructed MSA (dual-root / dual-query)
+- for MSA queries: standard root, meanings, patterns, related words, and context
+- merge and rank evidence according to context tier; include dialect reconstruction annotations in context
 
 #### Step 3: Response Construction
-- if the model is unavailable, answer through template-based grounded responses
-- if the model is available, generate using retrieved context plus morphology-aware features
-- post-process through syntactic and diacritization layers
+- if the model is unavailable, answer through template-based grounded responses (includes dialect etymology template)
+- if the model is available, generate using retrieved context plus morphology-aware features; if `dialect_match=true`, respond in the user's dialect
+- stream response token-by-token via SSE; post-process through syntactic constraints and diacritization
+- dialect reconstruction is best-effort: unmapped words fall back gracefully to zero-vector / original text
 
 ### 10. Customer Support and Agent Extension
 The system can support a customer-support-style agent on top of the core RAG stack, but this is an application layer, not the baseline identity of the model.
@@ -153,12 +162,10 @@ The system can support a customer-support-style agent on top of the core RAG sta
 - no ruling-style answers without citation and scope control
 
 #### B. Backlog epics (application-layer expansion)
-1. **Religious Answer Safety Layer**
-Includes citation-first answering, disputed-interpretation handling, and non-fatwa guardrails.
-2. **Customer Support Agent Layer**
-Includes intent routing, citation traceability, safety/escalation rules, answer templates, and conversation memory.
-3. **Source Quality and Coverage Expansion**
-Includes Tafsir breadth, Hadith source-quality ranking, provenance scoring, and coverage-gap reporting.
+1. **Religious Answer Safety Layer** — citation-first answering, disputed-interpretation handling, non-fatwa guardrails (MSA + dialect query detection).
+2. **Customer Support Agent Layer** — intent routing, citation traceability, safety/escalation rules, answer templates, conversation memory, and dialect-matched responses.
+3. **Source Quality and Coverage Expansion** — Tafsir breadth, Hadith source-quality ranking, provenance scoring, and coverage-gap reporting.
+4. **Dialect Pipeline Expansion** — extend etymological map and reconstruction engine to Levantine and Gulf Arabic using MADAR data; continuous dialect scraping pipeline for vocabulary evolution; dialect code-switching detection.
 
 This extension path is especially suitable for Quran, Hadith, Tafsir, Arabic meaning lookup, and guided support over curated knowledge sources.
 
@@ -167,11 +174,13 @@ The project includes explicit quality controls rather than relying only on model
 
 Required evaluation families:
 - data lineage and source traceability
-- golden-set extraction validation by source
+- golden-set extraction validation by source (including 200+ Egyptian↔MSA pairs for dialect alignment)
 - Jaccard and Levenshtein quality gates for scraped content
 - morphology, grammar, diacritization, and retrieval benchmarks
+- dialect-specific benchmarks: etymological root accuracy (> 70%), MSA reconstruction acceptability (> 60%), dialect RAG relevance (> 50%), dialect-matched response quality (> 70%)
 - quantization quality comparisons across deployment formats
 - learning-curve analysis for data scaling decisions
+- SSE streaming first-token latency (< 2 sec GPU, < 5 sec CPU)
 
 ### 12. Success Criteria
 - grounded Arabic linguistic answers with explicit source-aware behavior
@@ -180,6 +189,8 @@ Required evaluation families:
 - compact deployment modes that fit standard consumer hardware
 - successful routing to fine-grained contexts such as `Science/Medicine/Cardiology` instead of only broad families
 - quantization promotion only when quality gates are met (INT8 >= 99% FP16, INT4 >= 97% FP16, 2-bit >= 95% FP16)
+- dialect benchmarks remain within 2% tolerance at each quantization level
+- SSE streaming functional with < 2 sec first-token latency on T1000 GPU
 
 ### 13. Current Implementation Status
 The following delivery foundation is already operational:
@@ -196,18 +207,19 @@ The following delivery foundation is already operational:
 The project is therefore beyond a pure conceptual PoC. It is now an active implementation program with operational ingestion, persistence, orchestration, graph integration, and training infrastructure.
 
 ### 14. Program Direction
-Immediate direction is governed by the consolidated master plan in `LISAN_BIT_SINGLE_SOURCE_OF_TRUTH.md`.
+Immediate direction is governed by the consolidated master plan in `LISAN_BIT_SINGLE_SOURCE_OF_TRUTH.md` (v2, 28-week timeline).
 
 Priority path:
-- finish the retrieval-first product path
-- complete the native Arabic NLP layer
+- finish the retrieval-first product path with SSE streaming
+- build the dialect data pipeline (corpus → word alignment → etymological root map → syntactic rewrite engine)
+- complete the native Arabic NLP layer including Lisan.Dialect subsystem
 - expand grounded religious and lexical support with guardrails
-- train the primary FP16 model
+- train the primary FP16 model (includes Egyptian dialect data at ~15-20% of corpus)
 - quantize and package for efficient deployment
 
 Execution governance follows the master-plan split between:
-- baseline product behavior and technical gates
-- backlog expansion layers for religious safety and customer-support workflows
+- baseline product behavior and technical gates (9 epics, 28 weeks)
+- backlog expansion layers for religious safety, customer-support workflows, and multi-dialect expansion
 
 ### 15. Final Definition
-Lisan-Bit is best defined as a specialized Arabic linguistic intelligence platform with GraphRAG, native Arabic NLP, and a compact quantization-optimized SLM. Its strongest value is not generic conversation, but grounded Arabic understanding, retrieval, explanation, and support over linguistically and religiously significant sources.
+Lisan-Bit is a specialized Arabic linguistic intelligence platform with GraphRAG, native Arabic NLP, a data-driven Egyptian dialect system, SSE-streamed chat, and a compact quantization-optimized SLM. Its strongest value is not generic conversation, but grounded Arabic understanding, retrieval, explanation, and dialect-aware support over linguistically and religiously significant sources. Dialect knowledge is trained, scraped, and AI-generated — never manually curated.
