@@ -1,12 +1,4 @@
 @page "/"
-@using Microsoft.EntityFrameworkCore
-@using LisanBits.DataPipeline.Data
-@using LisanBits.DataPipeline.Data.Models
-@using System.Net.Http.Json
-@inject IDbContextFactory<PipelineDbContext> DbFactory
-@inject LisanBits.Dashboard.Services.ScraperProgressService ProgressService
-@inject IHttpClientFactory HttpClientFactory
-@implements IDisposable
 
 <PageTitle>LisanBits - Data Crawler Dashboard</PageTitle>
 
@@ -120,12 +112,108 @@
         </div>
     </div>
 
-    <!-- ==================== STEP 1: RAW DATA ACQUISITION ==================== -->
+    <!-- ==================== PIPELINE EXECUTION FLOW ==================== -->
+    <div class="card shadow-sm mb-4 pipeline-map-card">
+        <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center">
+            <span><i class="bi bi-shuffle"></i> Pipeline Execution Order & Progress</span>
+            <span class="badge bg-secondary">Epics 1 - 4</span>
+        </div>
+        <div class="card-body bg-black bg-opacity-20 py-4">
+            <div class="row text-center align-items-center position-relative">
+                
+                <!-- Step 1 Node -->
+                <div class="col-md-3 col-sm-6 position-relative mb-4 mb-md-0" style="z-index: 2;">
+                    <div class="d-inline-flex align-items-center justify-content-center rounded-circle border border-2 step-circle @(GetStepBorderClass(1))" style="width: 60px; height: 60px; background-color: #0b0e14; position: relative;">
+                        @{ var s1 = GetStepStatusLabel(1); }
+                        @if (s1 == "Running") { <i class="bi bi-arrow-repeat spin fs-4 text-primary"></i> }
+                        else if (s1 == "Completed") { <i class="bi bi-check-lg fs-4 text-success"></i> }
+                        else if (s1 == "Pending Data") { <i class="bi bi-hourglass-split fs-4 text-warning"></i> }
+                        else { <span class="fs-4 text-white">1</span> }
+                    </div>
+                    <div class="mt-2">
+                        <div class="fw-bold @(GetStepTextClass(1))">Step 1</div>
+                        <div class="text-white-50 small">Raw Ingestion</div>
+                        <span class="badge @(GetStepBadgeClass(1)) mt-1">@s1</span>
+                    </div>
+                </div>
+
+                <!-- Connector 1-2 -->
+                <div class="d-none d-md-block position-absolute connector-line" style="left: 12.5%; width: 25%; top: 30px; height: 3px; background: @(GetConnectorGradient(1, 2)); z-index: 0;"></div>
+
+                <!-- Step 2 Node -->
+                <div class="col-md-3 col-sm-6 position-relative mb-4 mb-md-0" style="z-index: 2;">
+                    <div class="d-inline-flex align-items-center justify-content-center rounded-circle border border-2 step-circle @(GetStepBorderClass(2))" style="width: 60px; height: 60px; background-color: #0b0e14; position: relative;">
+                        @{ var s2 = GetStepStatusLabel(2); }
+                        @if (s2 == "Blocked") { <i class="bi bi-lock-fill fs-4 text-muted"></i> }
+                        else if (s2 == "Running") { <i class="bi bi-arrow-repeat spin fs-4 text-primary"></i> }
+                        else if (s2 == "Completed") { <i class="bi bi-check-lg fs-4 text-success"></i> }
+                        else if (s2 == "Failed") { <i class="bi bi-exclamation-triangle-fill fs-4 text-danger"></i> }
+                        else { <span class="fs-4 text-white">2</span> }
+                    </div>
+                    <div class="mt-2">
+                        <div class="fw-bold @(GetStepTextClass(2))">Step 2</div>
+                        <div class="text-white-50 small">Lexicon Seeding</div>
+                        <span class="badge @(GetStepBadgeClass(2)) mt-1">@s2</span>
+                    </div>
+                </div>
+
+                <!-- Connector 2-3 -->
+                <div class="d-none d-md-block position-absolute connector-line" style="left: 37.5%; width: 25%; top: 30px; height: 3px; background: @(GetConnectorGradient(2, 3)); z-index: 0;"></div>
+
+                <!-- Step 3 Node -->
+                <div class="col-md-3 col-sm-6 position-relative mb-4 mb-sm-0" style="z-index: 2;">
+                    <div class="d-inline-flex align-items-center justify-content-center rounded-circle border border-2 step-circle @(GetStepBorderClass(3))" style="width: 60px; height: 60px; background-color: #0b0e14; position: relative;">
+                        @{ var s3 = GetStepStatusLabel(3); }
+                        @if (s3 == "Blocked") { <i class="bi bi-lock-fill fs-4 text-muted"></i> }
+                        else if (s3 == "Running") { <i class="bi bi-arrow-repeat spin fs-4 text-primary"></i> }
+                        else if (s3 == "Completed") { <i class="bi bi-check-lg fs-4 text-success"></i> }
+                        else if (s3 == "Failed") { <i class="bi bi-exclamation-triangle-fill fs-4 text-danger"></i> }
+                        else { <span class="fs-4 text-white">3</span> }
+                    </div>
+                    <div class="mt-2">
+                        <div class="fw-bold @(GetStepTextClass(3))">Step 3</div>
+                        <div class="text-white-50 small">ConceptNet Seeding</div>
+                        <span class="badge @(GetStepBadgeClass(3)) mt-1">@s3</span>
+                    </div>
+                </div>
+
+                <!-- Connector 2-4 -->
+                <div class="d-none d-md-block position-absolute connector-line" style="left: 62.5%; width: 25%; top: 30px; height: 3px; background: @(GetConnectorGradient(2, 4)); z-index: 0;"></div>
+
+                <!-- Step 4 Node -->
+                <div class="col-md-3 col-sm-6 position-relative" style="z-index: 2;">
+                    <div class="d-inline-flex align-items-center justify-content-center rounded-circle border border-2 step-circle @(GetStepBorderClass(4))" style="width: 60px; height: 60px; background-color: #0b0e14; position: relative;">
+                        @{ var s4 = GetStepStatusLabel(4); }
+                        @if (s4 == "Blocked") { <i class="bi bi-lock-fill fs-4 text-muted"></i> }
+                        else if (s4 == "Running") { <i class="bi bi-arrow-repeat spin fs-4 text-primary"></i> }
+                        else if (s4 == "Completed") { <i class="bi bi-check-lg fs-4 text-success"></i> }
+                        else if (s4 == "Failed") { <i class="bi bi-exclamation-triangle-fill fs-4 text-danger"></i> }
+                        else { <span class="fs-4 text-white">4</span> }
+                    </div>
+                    <div class="mt-2">
+                        <div class="fw-bold @(GetStepTextClass(4))">Step 4</div>
+                        <div class="text-white-50 small">Grammar Training</div>
+                        <span class="badge @(GetStepBadgeClass(4)) mt-1">@s4</span>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <!-- ==================== STEP 1: RAW DATA INGESTION ==================== -->
     <div class="border border-primary rounded p-4 mb-4 bg-light bg-opacity-10">
-        <h3 class="mb-3 text-primary"><span class="badge bg-primary me-2">Step 1</span> Raw Data Ingestion (Crawling & Extraction)</h3>
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <h3 class="text-primary mb-0"><span class="badge bg-primary me-2">Step 1</span> Raw Data Ingestion (Crawling & Extraction)</h3>
+            <span class="badge bg-success"><i class="bi bi-patch-check"></i> Root Pipeline Step</span>
+        </div>
         <p class="text-muted small">
-            <strong>Action Details:</strong> Ingests raw text segments and dictionary vocabulary from web resources and local documents.
-            Quality gates (FastText Language Identification and MinHash near-duplicate filters) are applied prior to DB insertion.
+            <strong>What this action does:</strong> Automatically runs the data scraper worker to crawl web sources or parse local books.
+            It cleans the text by filtering out non-Arabic text using <strong>FastText Language Identification</strong> (threshold > 0.9)
+            and filters out near-duplicates using <strong>MinHash deduplication</strong> (Jaccard similarity >= 0.85) before staging them in SQLite.
+        </p>
+        <p class="text-muted small">
+            <strong>Dependencies & Blockers:</strong> None. This is the root step of the pipeline. It populates the staging SQLite tables which all subsequent graph-seeding and syntax training steps depend upon.
         </p>
 
         <!-- Active Scraper Jobs Panel -->
@@ -262,9 +350,16 @@
 
     <!-- ==================== STEP 2: LEXICON GRAPH SEEDING ==================== -->
     <div class="border border-secondary rounded p-4 mb-4 bg-light bg-opacity-10">
-        <h3 class="mb-3 text-secondary"><span class="badge bg-secondary me-2">Step 2</span> Lexicon Graph Seeding (Dictionary Seeding)</h3>
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <h3 class="text-secondary mb-0"><span class="badge bg-secondary me-2">Step 2</span> Lexicon Graph Seeding (Dictionary Seeding)</h3>
+            @{
+                var step2Status = GetStepStatusLabel(2);
+                string badgeClass2 = step2Status == "Completed" ? "bg-success" : step2Status == "Running" ? "bg-primary" : step2Status == "Blocked" ? "bg-secondary" : "bg-info";
+            }
+            <span class="badge @badgeClass2">@step2Status</span>
+        </div>
         <p class="text-muted small">
-            <strong>Action Details:</strong> Migrates the extracted dictionary definitions, standard words, roots, plurals, synonyms, antonyms, and dialect etymologies from SQLite database into Neo4j graph nodes and relationships (e.g. <code>HAS_ROOT</code>, <code>SHARES_ROOT</code>, <code>DIALECT_MAPS_TO</code>).
+            <strong>What this action will do:</strong> Migrates the standard Arabic dictionaries (e.g. Shamela) and dialect books (e.g. Taimoor) from the SQLite staging database into the Neo4j Graph Database. It constructs root nodes (<code>Root</code>), vocabulary word nodes (<code>Word</code>), dialect etymological nodes (<code>DialectWord</code>), and registers their structural relationships (such as <code>HAS_ROOT</code>, <code>SHARES_ROOT</code>, and <code>DIALECT_MAPS_TO</code>).
         </p>
 
         <div class="card shadow-sm">
@@ -302,10 +397,18 @@
                             </div>
                         </div>
                         <div class="col-md-6 mb-3 mb-md-0">
-                            @if (lexiconCount == 0)
+                            @if (!IsStep1Completed())
                             {
-                                <div class="alert alert-warning py-2 mb-0">
-                                    <i class="bi bi-exclamation-triangle-fill"></i> <strong>Step 2 Blocked:</strong> Waiting for Step 1 (Raw Data Ingestion) to crawl and populate lexicon/dictionary entries in the SQLite database first (currently 0 entries found).
+                                <div class="alert alert-warning py-2 mb-0 small">
+                                    <h6 class="alert-heading fw-bold mb-1"><i class="bi bi-exclamation-triangle-fill"></i> Step 2 Blocked: Waiting for Step 1 (Raw Ingestion)</h6>
+                                    @if (IsStep1Running())
+                                    {
+                                        <span><strong>Reason:</strong> Step 1 Crawlers/Scrapers are actively running (InProgress). We must wait for ingestion to complete before migrating static dictionaries.</span>
+                                    }
+                                    else if (lexiconCount == 0)
+                                    {
+                                        <span><strong>Reason:</strong> No lexicon entries exist in the SQLite staging database. We cannot seed roots and words into Neo4j if SQLite is empty.</span>
+                                    }
                                 </div>
                             }
                             else if (seederStatus.Status == "Seeding")
@@ -332,7 +435,7 @@
                             }
                         </div>
                         <div class="col-md-3 text-end">
-                            @if (lexiconCount == 0)
+                            @if (!IsStep1Completed())
                             {
                                 <button class="btn btn-secondary w-100" disabled><i class="bi bi-lock-fill"></i> Blocked (No Lexicon)</button>
                             }
@@ -354,9 +457,16 @@
 
     <!-- ==================== STEP 3: SEMANTIC EDGE SEEDING ==================== -->
     <div class="border border-info rounded p-4 mb-4 bg-light bg-opacity-10">
-        <h3 class="mb-3 text-info"><span class="badge bg-info text-dark me-2">Step 3</span> Semantic Edge Seeding (ConceptNet Semantic Mapping)</h3>
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <h3 class="text-info mb-0"><span class="badge bg-info text-dark me-2">Step 3</span> Semantic Edge Seeding (ConceptNet Semantic Mapping)</h3>
+            @{
+                var step3Status = GetStepStatusLabel(3);
+                string badgeClass3 = step3Status == "Completed" ? "bg-success" : step3Status == "Running" ? "bg-primary" : step3Status == "Blocked" ? "bg-secondary" : "bg-info";
+            }
+            <span class="badge @badgeClass3">@step3Status</span>
+        </div>
         <p class="text-muted small">
-            <strong>Action Details:</strong> Downloads and extracts global assertions from ConceptNet, and bulk-inserts Arabic semantic relationship links (e.g. <code>SYNONYM_OF</code>, <code>ANTONYM_OF</code>) onto the existing Neo4j graph nodes.
+            <strong>What this action will do:</strong> Downloads global ConceptNet assertions, parses the dataset, isolates Arabic language semantic assertions (such as translations, synonyms, antonyms, etc.), and merges these semantic edges directly onto the seeded Neo4j word nodes. This creates connections like <code>SYNONYM_OF</code> and <code>ANTONYM_OF</code> between existing words.
         </p>
 
         <div class="card shadow-sm">
@@ -400,8 +510,9 @@
                         <div class="col-md-6 mb-3 mb-md-0">
                             @if (seederStatus == null || seederStatus.Status != "Completed")
                             {
-                                <div class="alert alert-warning py-2 mb-0">
-                                    <i class="bi bi-exclamation-triangle-fill"></i> <strong>Step 3 Blocked:</strong> Waiting for Step 2 (Lexicon Graph Seeding) to successfully complete. Standard lexicon vocabulary must be seeded as anchor points before semantic links can be created.
+                                <div class="alert alert-warning py-2 mb-0 small">
+                                    <h6 class="alert-heading fw-bold mb-1"><i class="bi bi-exclamation-triangle-fill"></i> Step 3 Blocked: Waiting for Step 2 (Lexicon Graph Seeding)</h6>
+                                    <span><strong>Reason:</strong> Standard lexicon vocabulary nodes must be seeded as anchor points in Neo4j before semantic relationships can be created. If triggered now, Neo4j would contain orphaned relationships or fail integrity constraints.</span>
                                 </div>
                             }
                             else if (importerStatus.Status == "Downloading")
@@ -461,9 +572,16 @@
 
     <!-- ==================== STEP 4: GRAMMAR & INFLECTION PIPELINE ==================== -->
     <div class="border border-success rounded p-4 mb-4 bg-light bg-opacity-10">
-        <h3 class="mb-3 text-success"><span class="badge bg-success me-2">Step 4</span> Grammar &amp; Inflection Pipeline (Syntactic Model Training)</h3>
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <h3 class="text-success mb-0"><span class="badge bg-success me-2">Step 4</span> Grammar &amp; Inflection Pipeline (Syntactic Model Training)</h3>
+            @{
+                var step4Status = GetStepStatusLabel(4);
+                string badgeClass4 = step4Status == "Completed" ? "bg-success" : step4Status == "Running" ? "bg-primary" : step4Status == "Blocked" ? "bg-secondary" : "bg-info";
+            }
+            <span class="badge @badgeClass4">@step4Status</span>
+        </div>
         <p class="text-muted small">
-            <strong>Action Details:</strong> Ingests dependency treebank annotations, runs Cypher queries to extract grammatical rule patterns, and trains an ML.NET classification model to tag sentences.
+            <strong>What this action will do:</strong> This step runs in three sequential phases: (1) Ingest dependency treebanks to merge syntax trees onto the Neo4j graph nodes; (2) Mine grammatical rules and morphological inflection trigger patterns via Cypher queries; and (3) Train an ML.NET classification model to tag POS, syntax trees, and inflection structures at runtime.
         </p>
 
         <div class="card shadow-sm">
@@ -511,8 +629,9 @@
                         <div class="col-md-6 mb-3 mb-md-0">
                             @if (seederStatus == null || seederStatus.Status != "Completed")
                             {
-                                <div class="alert alert-warning py-2 mb-0">
-                                    <i class="bi bi-exclamation-triangle-fill"></i> <strong>Step 4 Blocked:</strong> Waiting for Step 2 (Lexicon Graph Seeding) to successfully complete. Syntax structures and dependency annotations depend on existing lexical nodes.
+                                <div class="alert alert-warning py-2 mb-0 small">
+                                    <h6 class="alert-heading fw-bold mb-1"><i class="bi bi-exclamation-triangle-fill"></i> Step 4 Blocked: Waiting for Step 2 (Lexicon Graph Seeding)</h6>
+                                    <span><strong>Reason:</strong> Syntactic structures, treebank annotations, and mined rules require target vocabulary nodes (created in Step 2) inside the Neo4j Graph Database. The tagger cannot train on non-existent lexical anchors.</span>
                                 </div>
                             }
                             else if (grammarStatus.Status == "Ingesting")
@@ -599,439 +718,4 @@
     </div>
 </div>
 
-@code {
-    private ScrapeJob[]? scrapeJobs;
-    private CategoryStat[]? categoryStats;
-    private SourceStat[]? sourceStats;
-    private DataSourceConfig[]? configs;
-    private DataSourceConfig newConfig = new DataSourceConfig();
-    private ConceptNetStatus? importerStatus;
-    private GraphSeederStatus? seederStatus;
-    private GrammarStatus? grammarStatus;
-    private int lexiconCount = 0;
-    private System.Threading.Timer? _refreshTimer;
-    private DateTime _lastLoadTime = DateTime.MinValue;
-    private readonly System.Threading.SemaphoreSlim _loadLock = new System.Threading.SemaphoreSlim(1, 1);
-    private int? totalDuplicates = null;
-    private bool isScanningDuplicates = false;
-    private bool isRemovingDuplicates = false;
 
-    protected override async Task OnInitializedAsync()
-    {
-        await LoadData(force: true);
-
-        // Polling remains as a fallback when the worker's hub connection drops.
-        _refreshTimer = new System.Threading.Timer(async _ =>
-        {
-            await InvokeAsync(async () =>
-            {
-                await LoadData(force: true);
-                StateHasChanged();
-            });
-        }, null, TimeSpan.FromSeconds(25), TimeSpan.FromSeconds(25));
-        
-        ProgressService.OnProgressUpdated += HandleProgressUpdated;
-    }
-
-    private void HandleProgressUpdated(string source, int index)
-    {
-        if (scrapeJobs != null)
-        {
-            var job = scrapeJobs.FirstOrDefault(j => j.SourceName == source);
-            if (job != null)
-            {
-                job.LastProcessedIndex = index;
-                job.Status = "InProgress";
-                job.LastUpdatedAt = DateTime.UtcNow;
-            }
-        }
-        
-        InvokeAsync(async () =>
-        {
-            await LoadData(force: true);
-            StateHasChanged();
-        });
-    }
-
-    private async Task LoadData(bool force = false)
-    {
-        if (!force && DateTime.UtcNow - _lastLoadTime < TimeSpan.FromSeconds(10))
-        {
-            return;
-        }
-
-        await _loadLock.WaitAsync();
-        try
-        {
-            if (!force && DateTime.UtcNow - _lastLoadTime < TimeSpan.FromSeconds(10))
-            {
-                return;
-            }
-
-            using var db = DbFactory.CreateDbContext();
-            
-            scrapeJobs = await db.ScrapeJobs.ToArrayAsync();
-            configs = await db.DataSourceConfigs.ToArrayAsync();
-            lexiconCount = await db.LexiconEntries.CountAsync();
-            
-            categoryStats = await db.RawUniversalData
-                .GroupBy(d => d.Category)
-                .Select(g => new CategoryStat { 
-                    Category = g.Key, 
-                    TotalSentences = g.Sum(d => d.SentenceCount),
-                    TotalWords = g.Sum(d => d.WordCount)
-                }).ToArrayAsync();
-                
-            sourceStats = await db.RawUniversalData
-                .GroupBy(d => d.Source)
-                .Select(g => new SourceStat { 
-                    Source = g.Key, 
-                    TotalSentences = g.Sum(d => d.SentenceCount),
-                    TotalRows = g.Count(),
-                    TotalWords = g.Sum(d => (long)d.WordCount)
-                }).ToArrayAsync();
-
-            _lastLoadTime = DateTime.UtcNow;
-
-            // Fetch ConceptNet importer service status
-            try
-            {
-                using var client = HttpClientFactory.CreateClient("ConceptNetImporter");
-                importerStatus = await client.GetFromJsonAsync<ConceptNetStatus>("api/conceptnet/status");
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Error fetching ConceptNet status: {ex.Message}");
-            }
-
-            // Fetch Graph Seeder service status
-            try
-            {
-                using var client = HttpClientFactory.CreateClient("GraphSeeder");
-                seederStatus = await client.GetFromJsonAsync<GraphSeederStatus>("api/seeder/status");
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Error fetching Graph Seeder status: {ex.Message}");
-            }
-
-            // Fetch Grammar pipeline service status
-            try
-            {
-                using var client = HttpClientFactory.CreateClient("GrammarPipeline");
-                grammarStatus = await client.GetFromJsonAsync<GrammarStatus>("api/grammar/status");
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Error fetching Grammar status: {ex.Message}");
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Error fetching data: {ex.Message}");
-        }
-        finally
-        {
-            _loadLock.Release();
-        }
-    }
-
-    private async Task AddSource()
-    {
-        if(string.IsNullOrWhiteSpace(newConfig.Name) || string.IsNullOrWhiteSpace(newConfig.BaseUrl)) return;
-        
-        using var db = DbFactory.CreateDbContext();
-        newConfig.IsActive = true;
-        db.DataSourceConfigs.Add(newConfig);
-        await db.SaveChangesAsync();
-        
-        newConfig = new DataSourceConfig(); // reset form
-        await LoadData(force: true);
-    }
-
-    private async Task ResetDatabase()
-    {
-        using var db = DbFactory.CreateDbContext();
-        await db.Database.ExecuteSqlRawAsync("DELETE FROM RawUniversalData");
-        await db.Database.ExecuteSqlRawAsync("DELETE FROM ScrapeJobs");
-        await LoadData(force: true);
-    }
-
-    private async Task ResetSource(string sourceName)
-    {
-        using var db = DbFactory.CreateDbContext();
-        await db.Database.ExecuteSqlRawAsync("DELETE FROM RawUniversalData WHERE Source = {0}", sourceName);
-        await db.Database.ExecuteSqlRawAsync("DELETE FROM ScrapeJobs WHERE SourceName = {0}", sourceName);
-        await LoadData(force: true);
-    }
-
-    private async Task TriggerImport()
-    {
-        try
-        {
-            using var client = HttpClientFactory.CreateClient("ConceptNetImporter");
-            var response = await client.PostAsync("api/conceptnet/import", null);
-            if (response.IsSuccessStatusCode)
-            {
-                await LoadData(force: true);
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Error triggering import: {ex.Message}");
-        }
-    }
-
-    private async Task ResetConceptNet()
-    {
-        try
-        {
-            using var client = HttpClientFactory.CreateClient("ConceptNetImporter");
-            var response = await client.PostAsync("api/conceptnet/reset", null);
-            if (response.IsSuccessStatusCode)
-            {
-                await LoadData(force: true);
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Error resetting ConceptNet data: {ex.Message}");
-        }
-    }
-
-    private async Task TriggerSeeding()
-    {
-        try
-        {
-            using var client = HttpClientFactory.CreateClient("GraphSeeder");
-            var response = await client.PostAsync("api/seeder/import", null);
-            if (response.IsSuccessStatusCode)
-            {
-                await LoadData(force: true);
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Error triggering seeding: {ex.Message}");
-        }
-    }
-
-    private async Task ResetGraph()
-    {
-        try
-        {
-            using var client = HttpClientFactory.CreateClient("GraphSeeder");
-            var response = await client.PostAsync("api/seeder/reset", null);
-            if (response.IsSuccessStatusCode)
-            {
-                await LoadData(force: true);
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Error resetting lexicon graph: {ex.Message}");
-        }
-    }
-
-    private async Task TriggerGrammarIngest()
-    {
-        try
-        {
-            using var client = HttpClientFactory.CreateClient("GrammarPipeline");
-            var response = await client.PostAsync("api/grammar/ingest", null);
-            if (response.IsSuccessStatusCode)
-            {
-                await LoadData(force: true);
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Error triggering grammar ingest: {ex.Message}");
-        }
-    }
-
-    private async Task TriggerGrammarMine()
-    {
-        try
-        {
-            using var client = HttpClientFactory.CreateClient("GrammarPipeline");
-            var response = await client.PostAsync("api/grammar/mine", null);
-            if (response.IsSuccessStatusCode)
-            {
-                await LoadData(force: true);
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Error triggering grammar mine: {ex.Message}");
-        }
-    }
-
-    private async Task TriggerGrammarTrain()
-    {
-        try
-        {
-            using var client = HttpClientFactory.CreateClient("GrammarPipeline");
-            var response = await client.PostAsync("api/grammar/train", null);
-            if (response.IsSuccessStatusCode)
-            {
-                await LoadData(force: true);
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Error triggering grammar train: {ex.Message}");
-        }
-    }
-
-    private async Task ResetGrammar()
-    {
-        try
-        {
-            using var client = HttpClientFactory.CreateClient("GrammarPipeline");
-            var response = await client.PostAsync("api/grammar/reset", null);
-            if (response.IsSuccessStatusCode)
-            {
-                await LoadData(force: true);
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Error resetting grammar data: {ex.Message}");
-        }
-    }
-
-    private string FormatBytes(long bytes)
-    {
-        string[] suffixes = { "B", "KB", "MB", "GB", "TB" };
-        int counter = 0;
-        decimal number = bytes;
-        while (Math.Round(number / 1024) >= 1)
-        {
-            number /= 1024;
-            counter++;
-        }
-        return $"{number:0.0} {suffixes[counter]}";
-    }
-
-    public void Dispose()
-    {
-        _refreshTimer?.Dispose();
-        ProgressService.OnProgressUpdated -= HandleProgressUpdated;
-    }
-
-    private async Task ScanForDuplicates()
-    {
-        isScanningDuplicates = true;
-        totalDuplicates = null;
-        StateHasChanged();
-        
-        try
-        {
-            using var db = DbFactory.CreateDbContext();
-            await db.Database.OpenConnectionAsync();
-            using var command = db.Database.GetDbConnection().CreateCommand();
-            
-            command.CommandText = @"
-                SELECT SUM(DuplicateRows) AS TotalDuplicates
-                FROM (
-                    SELECT COUNT(*) - 1 AS DuplicateRows
-                    FROM RawUniversalData
-                    GROUP BY Source, TextContent
-                    HAVING COUNT(*) > 1
-                )";
-                
-            var result = await command.ExecuteScalarAsync();
-            totalDuplicates = (result != DBNull.Value && result != null) ? Convert.ToInt32(result) : 0;
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Error scanning for duplicates: {ex.Message}");
-            totalDuplicates = 0;
-        }
-        finally
-        {
-            isScanningDuplicates = false;
-            StateHasChanged();
-        }
-    }
-
-    private async Task RemoveDuplicates()
-    {
-        isRemovingDuplicates = true;
-        StateHasChanged();
-        
-        try
-        {
-            using var db = DbFactory.CreateDbContext();
-            
-            await db.Database.ExecuteSqlRawAsync(@"
-                DELETE FROM RawUniversalData 
-                WHERE rowid NOT IN (
-                    SELECT MIN(rowid) 
-                    FROM RawUniversalData 
-                    GROUP BY Source, TextContent
-                )");
-
-            totalDuplicates = 0;
-            await LoadData(force: true);
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Error removing duplicates: {ex.Message}");
-        }
-        finally
-        {
-            isRemovingDuplicates = false;
-            StateHasChanged();
-        }
-    }
-
-    public class ConceptNetStatus
-    {
-        public string Status { get; set; } = "Idle";
-        public double Progress { get; set; }
-        public long DownloadedBytes { get; set; }
-        public long TotalBytes { get; set; }
-        public long ProcessedLines { get; set; }
-        public long ImportedEdges { get; set; }
-        public string? ErrorMessage { get; set; }
-    }
-
-    public class GraphSeederStatus
-    {
-        public string Status { get; set; } = "Idle";
-        public double Progress { get; set; }
-        public int ProcessedCount { get; set; }
-        public int TotalEntries { get; set; }
-        public string? ErrorMessage { get; set; }
-    }
-
-    public class GrammarStatus
-    {
-        public string Status { get; set; } = "Idle";
-        public double Progress { get; set; }
-        public long ProcessedItems { get; set; }
-        public long TotalItems { get; set; }
-        public long MergedNodes { get; set; }
-        public long MergedEdges { get; set; }
-        public double ModelAccuracy { get; set; }
-        public string? ErrorMessage { get; set; }
-        public string[]? Logs { get; set; }
-    }
-
-    public class CategoryStat
-    {
-        public string Category { get; set; } = string.Empty;
-        public int TotalSentences { get; set; }
-        public int TotalWords { get; set; }
-    }
-
-    public class SourceStat
-    {
-        public string Source { get; set; } = string.Empty;
-        public int TotalSentences { get; set; }
-        public int TotalRows { get; set; }
-        public long TotalWords { get; set; }
-    }
-}

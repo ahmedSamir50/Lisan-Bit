@@ -41,7 +41,7 @@ The pipeline must clean data before insertion, utilizing FastText for Language I
 
 ---
 
-## 3. Epic 3: Knowledge Graph Seeding
+## 3. Epic 3: Knowledge Graph Seeding [COMPLETED]
 We need to explicitly move the cleaned Shamela dictionary entries and generic corpus data from SQLite into the Neo4j Knowledge Graph.
 
 ### New Graph Seeder Project
@@ -59,6 +59,12 @@ We need to explicitly move the cleaned Shamela dictionary entries and generic co
 
 ### Solution Update
 - **[MODIFY]** `LisanBits.slnx`: Add `src/LisanBits.GraphSeeder/LisanBits.GraphSeeder.csproj`.
+
+### Dashboard Orchestration & Step Execution Pipeline
+- Refactored `LisanBits.Dashboard` to enforce sequential step-by-step pipeline execution (Steps 1 through 4).
+- Added a visual stepper/pipeline flow component at the top of the dashboard showing execution paths.
+- Enforced control button locks and added detailed warnings/blocker rationale for steps (e.g. Step 2 requires Step 1 completed, Steps 3/4 require Step 2 completed).
+- Split `Home.razor` into three separate companion files: `Home.razor` (markup), `Home.razor.cs` (code-behind partial class), and `Home.razor.css` (isolated CSS styling) to ensure high cohesion and readability.
 
 ---
 

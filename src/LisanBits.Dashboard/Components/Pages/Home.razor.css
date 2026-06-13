@@ -1,0 +1,37 @@
+.pipeline-map-card {
+    background: rgba(255, 255, 255, 0.02) !important;
+    border: 1px solid rgba(255, 255, 255, 0.05) !important;
+    border-radius: 16px;
+}
+.step-circle {
+    transition: all 0.4s ease;
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+}
+.border-glow-active {
+    box-shadow: 0 0 15px rgba(59, 130, 246, 0.6) !important;
+    border-color: #3b82f6 !important;
+    animation: pulse-border-blue 2s infinite alternate;
+}
+.border-glow-info {
+    box-shadow: 0 0 15px rgba(6, 182, 212, 0.3) !important;
+    border-color: #06b6d4 !important;
+    animation: pulse-border-cyan 2s infinite alternate;
+}
+@keyframes pulse-border-blue {
+    from { box-shadow: 0 0 5px rgba(59, 130, 246, 0.3); }
+    to { box-shadow: 0 0 20px rgba(59, 130, 246, 0.7); }
+}
+@keyframes pulse-border-cyan {
+    from { box-shadow: 0 0 5px rgba(6, 182, 212, 0.2); }
+    to { box-shadow: 0 0 15px rgba(6, 182, 212, 0.5); }
+}
+.spin-slow {
+    animation: spin-anim 10s linear infinite;
+}
+@keyframes spin-anim {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+.connector-line {
+    transition: background 0.8s ease;
+}
