@@ -213,6 +213,21 @@ public class UniversalHtmlScraper
                         if (string.IsNullOrWhiteSpace(line)) continue;
 
                         var parts = line.Split('\t');
+                        
+                        // Handle Quranic morphology database by saving raw lines verbatim
+                        if (config.Id == 57 || filePath.Contains("quran-morphology"))
+                        {
+                            if (line.StartsWith("#")) continue;
+                            if (linesSkipped < skipRows) { linesSkipped++; continue; }
+                            if (linesRead >= chunkSize) break;
+
+                            if (parts.Length >= 4)
+                            {
+                                result.ExtractedData.Add((line, 1, parts.Length, null));
+                            }
+                            linesRead++;
+                            continue;
+                        }
                         if (headers == null)
                         {
                             // Detect if first line is a header
@@ -380,6 +395,181 @@ public class UniversalHtmlScraper
                     }
 
                     if (itemsRead == chunkSize)
+                    {
+                        var nextSkip = skipRows + chunkSize;
+                        result.DiscoveredUrls.Add($"file:///{filePath.Replace('\\', '/')}?skip={nextSkip}");
+                    }
+
+                    return result;
+                }
+
+                // JSONL_ZST_FILE: OSCAR (Zstandard JSON Lines)
+                if (config.TargetXPath == "JSONL_ZST_FILE")
+                {
+                    int linesRead = 0;
+                    int linesSkipped = 0;
+
+                    using var fileStream = new System.IO.FileStream(filePath, System.IO.FileMode.Open, System.IO.FileAccess.Read, System.IO.FileShare.Read, 81920, useAsync: true);
+                    using var decompressor = new ZstdSharp.Decompressor();
+                    using var decompressionStream = new ZstdSharp.DecompressionStream(fileStream, decompressor);
+                    using var reader = new System.IO.StreamReader(decompressionStream, System.Text.Encoding.UTF8);
+
+                    while (await reader.ReadLineAsync(cancellationToken) is { } line)
+                    {
+                        var trimmed = line.Trim();
+                        if (string.IsNullOrWhiteSpace(trimmed)) continue;
+
+                        if (linesSkipped < skipRows) { linesSkipped++; continue; }
+                        if (linesRead >= chunkSize) break;
+
+                        string textValue = string.Empty;
+                        try
+                        {
+                            using var doc = System.Text.Json.JsonDocument.Parse(trimmed);
+                            if (doc.RootElement.TryGetProperty("text", out var textProp))
+                            {
+                                textValue = textProp.GetString() ?? string.Empty;
+                            }
+                        }
+                        catch { }
+
+                        if (!string.IsNullOrWhiteSpace(textValue))
+                        {
+                            var processed = ProcessContent(textValue);
+                            if (processed.Sentences > 0)
+                                result.ExtractedData.Add((processed.Text, processed.Sentences, processed.Words, null));
+                        }
+
+                        linesRead++;
+                    }
+
+                    if (linesRead == chunkSize)
+                    {
+                        var nextSkip = skipRows + chunkSize;
+                        result.DiscoveredUrls.Add($"file:///{filePath.Replace('\\', '/')}?skip={nextSkip}");
+                    }
+
+                    return result;
+                }
+
+                // XZ_TEXT_FILE: CC-100 (LZMA XZ text file)
+                if (config.TargetXPath == "XZ_TEXT_FILE")
+                {
+                    int linesRead = 0;
+                    int linesSkipped = 0;
+
+                    using var fileStream = new System.IO.FileStream(filePath, System.IO.FileMode.Open, System.IO.FileAccess.Read, System.IO.FileShare.Read, 81920, useAsync: true);
+                    using var xzStream = new SharpCompress.Compressors.Xz.XZStream(fileStream);
+                    using var reader = new System.IO.StreamReader(xzStream, System.Text.Encoding.UTF8);
+
+                    var documentBuilder = new System.Text.StringBuilder();
+                    while (await reader.ReadLineAsync(cancellationToken) is { } line)
+                    {
+                        if (string.IsNullOrWhiteSpace(line))
+                        {
+                            if (documentBuilder.Length > 0)
+                            {
+                                var docText = documentBuilder.ToString().Trim();
+                                documentBuilder.Clear();
+
+                                if (linesSkipped < skipRows) { linesSkipped++; continue; }
+                                if (linesRead >= chunkSize) break;
+
+                                var processed = ProcessContent(docText);
+                                if (processed.Sentences > 0)
+                                {
+                                    result.ExtractedData.Add((processed.Text, processed.Sentences, processed.Words, null));
+                                    linesRead++;
+                                }
+                            }
+                            continue;
+                        }
+                        documentBuilder.AppendLine(line);
+                    }
+
+                    if (documentBuilder.Length > 0 && linesRead < chunkSize)
+                    {
+                        var docText = documentBuilder.ToString().Trim();
+                        if (linesSkipped >= skipRows)
+                        {
+                            var processed = ProcessContent(docText);
+                            if (processed.Sentences > 0)
+                            {
+                                result.ExtractedData.Add((processed.Text, processed.Sentences, processed.Words, null));
+                                linesRead++;
+                            }
+                        }
+                    }
+
+                    if (linesRead >= chunkSize)
+                    {
+                        var nextSkip = skipRows + chunkSize;
+                        result.DiscoveredUrls.Add($"file:///{filePath.Replace('\\', '/')}?skip={nextSkip}");
+                    }
+
+                    return result;
+                }
+
+                // GZ_TEXT_FILE: OpenSubtitles (Gzip plain text)
+                if (config.TargetXPath == "GZ_TEXT_FILE")
+                {
+                    int linesRead = 0;
+                    int linesSkipped = 0;
+
+                    using var fileStream = new System.IO.FileStream(filePath, System.IO.FileMode.Open, System.IO.FileAccess.Read, System.IO.FileShare.Read, 81920, useAsync: true);
+                    using var gzipStream = new System.IO.Compression.GZipStream(fileStream, System.IO.Compression.CompressionMode.Decompress);
+                    using var reader = new System.IO.StreamReader(gzipStream, System.Text.Encoding.UTF8);
+
+                    var tagsRegex = new Regex(@"<[^>]*>", RegexOptions.Compiled);
+                    var parentheticalRegex = new Regex(@"[\(\[\{][^\)\]\}]*[\)\]\}]", RegexOptions.Compiled);
+
+                    while (await reader.ReadLineAsync(cancellationToken) is { } line)
+                    {
+                        var cleaned = tagsRegex.Replace(line, "").Trim();
+                        cleaned = parentheticalRegex.Replace(cleaned, "").Trim();
+                        
+                        if (string.IsNullOrWhiteSpace(cleaned)) continue;
+                        if (cleaned.Contains("ترجمة") || cleaned.Contains("تعديل") || cleaned.Contains("subtitles")) continue;
+                        if (cleaned.StartsWith("-") || cleaned.StartsWith("*")) cleaned = cleaned.Substring(1).Trim();
+
+                        if (linesSkipped < skipRows) { linesSkipped++; continue; }
+                        if (linesRead >= chunkSize) break;
+
+                        var processed = ProcessContent(cleaned);
+                        if (processed.Sentences > 0)
+                            result.ExtractedData.Add((processed.Text, processed.Sentences, processed.Words, null));
+                        linesRead++;
+                    }
+
+                    if (linesRead == chunkSize)
+                    {
+                        var nextSkip = skipRows + chunkSize;
+                        result.DiscoveredUrls.Add($"file:///{filePath.Replace('\\', '/')}?skip={nextSkip}");
+                    }
+
+                    return result;
+                }
+
+                // MOSES_ZIP_FILE: OPUS extracted files
+                if (config.TargetXPath == "MOSES_ZIP_FILE")
+                {
+                    int linesRead = 0;
+                    int linesSkipped = 0;
+
+                    await foreach (var line in ReadLinesAsync(filePath, cancellationToken))
+                    {
+                        if (string.IsNullOrWhiteSpace(line)) continue;
+
+                        if (linesSkipped < skipRows) { linesSkipped++; continue; }
+                        if (linesRead >= chunkSize) break;
+
+                        var processed = ProcessContent(line);
+                        if (processed.Sentences > 0)
+                            result.ExtractedData.Add((processed.Text, processed.Sentences, processed.Words, null));
+                        linesRead++;
+                    }
+
+                    if (linesRead == chunkSize)
                     {
                         var nextSkip = skipRows + chunkSize;
                         result.DiscoveredUrls.Add($"file:///{filePath.Replace('\\', '/')}?skip={nextSkip}");

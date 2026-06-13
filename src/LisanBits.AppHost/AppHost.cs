@@ -54,11 +54,19 @@ var webApi = builder.AddProject<Projects.LisanBits_WebApi>("web-api")
                     .WithEnvironment("Neo4j__Password", neo4jPassword)
                     .WaitFor(neo4j);
 
+var graphSeeder = builder.AddProject<Projects.LisanBits_GraphSeeder>("graph-seeder")
+                         .WithReference(pipelineDb)
+                         .WithEnvironment("ConnectionStrings__neo4j", neo4j.GetEndpoint("bolt"))
+                         .WithEnvironment("Neo4j__Username", "neo4j")
+                         .WithEnvironment("Neo4j__Password", neo4jPassword)
+                         .WaitFor(neo4j);
+
 var dashboard = builder.AddProject<Projects.LisanBits_Dashboard>("lisanbits-dashboard")
                        .WithReference(pipelineDb)
                        .WithReference(conceptNetImporter)
                        .WithReference(grammarPipeline)
-                       .WithReference(webApi);
+                       .WithReference(webApi)
+                       .WithReference(graphSeeder);
 
 var dataPipeline = builder.AddProject<Projects.LisanBits_DataPipeline>("lisanbits-datapipeline")
                            .WithReference(farasaApi.GetEndpoint("farasa-endpoint"))
@@ -70,6 +78,7 @@ var dataPipeline = builder.AddProject<Projects.LisanBits_DataPipeline>("lisanbit
                            .WaitFor(farasaApi)
                            .WaitFor(neo4j)
                            .WaitFor(dashboard);
+
 
 var trainerApi = builder.AddDockerfile("lisanbits-trainer-api", "../LisanBits.Trainer.Api")
                         .WithHttpEndpoint(targetPort: 8000, name: "trainer-endpoint");

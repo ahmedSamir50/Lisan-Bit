@@ -293,6 +293,37 @@ public class Worker : BackgroundService
                     continue;
                 }
 
+                // Ingestion Limit Check: Prevent crawler from running indefinitely on large datasets
+                var currentCount = await db.RawUniversalData.CountAsync(d => d.Source == source.Name, stoppingToken);
+                var limit = GetMaxRecordsLimit(source);
+                if (currentCount >= limit)
+                {
+                    logger.LogInformation("Source {SourceName} has reached its limit of {Limit} records ({CurrentCount} current). Completing job and cleaning queue.", source.Name, limit, currentCount);
+                    
+                    var pendingUrls = await db.CrawledUrlQueue
+                        .Where(q => q.DataSourceId == source.Id && q.Status == "Pending")
+                        .ToListAsync(stoppingToken);
+                    if (pendingUrls.Any())
+                    {
+                        foreach (var pUrl in pendingUrls)
+                        {
+                            pUrl.Status = "Completed";
+                        }
+                    }
+                    
+                    var jobToUpdate = await db.ScrapeJobs.FirstOrDefaultAsync(j => j.SourceName == source.Name, stoppingToken);
+                    if (jobToUpdate != null && jobToUpdate.Status != "Completed")
+                    {
+                        jobToUpdate.Status = "Completed";
+                    }
+                    
+                    await _dbWriteLock.WaitAsync(stoppingToken);
+                    try { await db.SaveChangesAsync(stoppingToken); }
+                    finally { _dbWriteLock.Release(); }
+                    
+                    break; // Exit loop for this source
+                }
+
                 // 1. Ensure seed URL is in queue if queue is empty
                 var hasAny = await db.CrawledUrlQueue.AnyAsync(q => q.DataSourceId == source.Id, stoppingToken);
                 if (!hasAny)
@@ -317,12 +348,34 @@ public class Worker : BackgroundService
                             }
                         }
                     }
-                    else if (source.Id == 50 || source.Id == 51 || source.Id == 52)
+                    else if (source.Id == 50 || source.Id == 51 || source.Id == 52 ||
+                             source.Id == 53 || source.Id == 54 || source.Id == 55 || source.Id == 56 || source.Id == 57)
                     {
-                        var localPath = Path.Combine(Path.GetTempPath(), "LisanBits", $"MADAR_{source.Id}");
+                        string localPath;
+                        string searchPattern;
+                        
+                        if (source.Id == 50 || source.Id == 51 || source.Id == 52)
+                        {
+                            localPath = Path.Combine(Path.GetTempPath(), "LisanBits", $"MADAR_{source.Id}");
+                            searchPattern = "*.tsv";
+                        }
+                        else
+                        {
+                            localPath = Path.Combine(Path.GetTempPath(), "LisanBits", $"Dataset_{source.Id}");
+                            searchPattern = source.Id switch
+                            {
+                                53 => "*.zst",
+                                54 => "*.xz",
+                                55 => "*.ar",
+                                56 => "*.gz",
+                                57 => "quran-morphology.txt",
+                                _ => "*.*"
+                            };
+                        }
+
                         if (Directory.Exists(localPath))
                         {
-                            var files = Directory.GetFiles(localPath, "*.tsv", SearchOption.AllDirectories);
+                            var files = Directory.GetFiles(localPath, searchPattern, SearchOption.AllDirectories);
                             foreach (var file in files)
                             {
                                 var fileUrl = $"file:///{file.Replace('\\', '/')}";
@@ -419,11 +472,11 @@ public class Worker : BackgroundService
                             string cleanedText = "";
                             if (source.Category == "Slang" || source.Category == "Dialect")
                             {
-                                passes = _dataCleaner.ProcessAndVerifyDialect(item.Text, out cleanedText);
+                                passes = _dataCleaner.ProcessAndVerifyDialect(item.Text, source.Category, out cleanedText);
                             }
                             else
                             {
-                                passes = _dataCleaner.ProcessAndVerify(item.Text, out cleanedText);
+                                passes = _dataCleaner.ProcessAndVerify(item.Text, source.Category, out cleanedText);
                             }
 
                             if (passes)
@@ -458,7 +511,7 @@ public class Worker : BackgroundService
                                 stoppingToken);
                             if (!exists)
                             {
-                                if (_dataCleaner.ProcessAndVerifyLexicon(lexiconEntry.Definition, out string cleanedDefinition))
+                                if (_dataCleaner.ProcessAndVerifyLexicon(lexiconEntry.Definition, source.Category, out string cleanedDefinition))
                                 {
                                     lexiconEntry.Definition = cleanedDefinition;
                                     db.LexiconEntries.Add(lexiconEntry);
@@ -635,13 +688,18 @@ public class Worker : BackgroundService
 
     private async Task<bool> EnsureSourceReadyForProcessingAsync(DataSourceConfig source, CancellationToken ct)
     {
-        if (source.Id != 29 && source.Id != 30 && source.Id != 50 && source.Id != 51 && source.Id != 52)
+        if (source.Id != 29 && source.Id != 30 && source.Id != 50 && source.Id != 51 && source.Id != 52 &&
+            source.Id != 53 && source.Id != 54 && source.Id != 55 && source.Id != 56 && source.Id != 57)
             return true;
 
         string localPath;
         if (source.Id == 50 || source.Id == 51 || source.Id == 52)
         {
             localPath = Path.Combine(Path.GetTempPath(), "LisanBits", $"MADAR_{source.Id}").Replace('\\', '/');
+        }
+        else if (source.Id == 53 || source.Id == 54 || source.Id == 55 || source.Id == 56 || source.Id == 57)
+        {
+            localPath = Path.Combine(Path.GetTempPath(), "LisanBits", $"Dataset_{source.Id}").Replace('\\', '/');
         }
         else
         {
@@ -659,6 +717,31 @@ public class Worker : BackgroundService
         else if (source.Id == 50 || source.Id == 51 || source.Id == 52)
         {
             if (Directory.Exists(localPath) && Directory.GetFiles(localPath, "*.tsv", SearchOption.AllDirectories).Length > 0)
+                return true;
+        }
+        else if (source.Id == 55)
+        {
+            if (Directory.Exists(localPath) && Directory.GetFiles(localPath, "*.ar", SearchOption.AllDirectories).Length > 0)
+                return true;
+        }
+        else if (source.Id == 53)
+        {
+            if (File.Exists(Path.Combine(localPath, "ar_meta_part_1.jsonl.zst")))
+                return true;
+        }
+        else if (source.Id == 54)
+        {
+            if (File.Exists(Path.Combine(localPath, "ar.txt.xz")))
+                return true;
+        }
+        else if (source.Id == 56)
+        {
+            if (File.Exists(Path.Combine(localPath, "ar.txt.gz")))
+                return true;
+        }
+        else if (source.Id == 57)
+        {
+            if (File.Exists(Path.Combine(localPath, "quran-morphology.txt")))
                 return true;
         }
         else
@@ -691,6 +774,26 @@ public class Worker : BackgroundService
             {
                 await DownloadAndExtractMadarZipAsync(localPath, source.BaseUrl, ct);
             }
+            else if (source.Id == 53)
+            {
+                await DownloadDatasetFileAsync(localPath, "ar_meta_part_1.jsonl.zst", source.BaseUrl, ct);
+            }
+            else if (source.Id == 54)
+            {
+                await DownloadDatasetFileAsync(localPath, "ar.txt.xz", source.BaseUrl, ct);
+            }
+            else if (source.Id == 55)
+            {
+                await DownloadAndExtractZipAsync(localPath, source.BaseUrl, ct);
+            }
+            else if (source.Id == 56)
+            {
+                await DownloadDatasetFileAsync(localPath, "ar.txt.gz", source.BaseUrl, ct);
+            }
+            else if (source.Id == 57)
+            {
+                await DownloadDatasetFileAsync(localPath, "quran-morphology.txt", source.BaseUrl, ct);
+            }
         }
         catch (Exception ex)
         {
@@ -709,6 +812,26 @@ public class Worker : BackgroundService
         if (source.Id == 50 || source.Id == 51 || source.Id == 52)
         {
             return Directory.Exists(localPath) && Directory.GetFiles(localPath, "*.tsv", SearchOption.AllDirectories).Length > 0;
+        }
+        if (source.Id == 55)
+        {
+            return Directory.Exists(localPath) && Directory.GetFiles(localPath, "*.ar", SearchOption.AllDirectories).Length > 0;
+        }
+        if (source.Id == 53)
+        {
+            return File.Exists(Path.Combine(localPath, "ar_meta_part_1.jsonl.zst"));
+        }
+        if (source.Id == 54)
+        {
+            return File.Exists(Path.Combine(localPath, "ar.txt.xz"));
+        }
+        if (source.Id == 56)
+        {
+            return File.Exists(Path.Combine(localPath, "ar.txt.gz"));
+        }
+        if (source.Id == 57)
+        {
+            return File.Exists(Path.Combine(localPath, "quran-morphology.txt"));
         }
         return File.Exists(localPath);
     }
@@ -947,5 +1070,89 @@ public class Worker : BackgroundService
             }
             throw;
         }
+    }
+
+    private async Task DownloadDatasetFileAsync(string targetDir, string fileName, string url, CancellationToken ct)
+    {
+        Directory.CreateDirectory(targetDir);
+        var targetFile = Path.Combine(targetDir, fileName);
+        _logger.LogInformation("Downloading {FileName} from {Url} to {TargetFile}...", fileName, url, targetFile);
+        
+        using var client = new HttpClient();
+        client.Timeout = TimeSpan.FromHours(2);
+        
+        var response = await client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct);
+        response.EnsureSuccessStatusCode();
+        
+        await using var fileStream = File.Create(targetFile);
+        await response.Content.CopyToAsync(fileStream, ct);
+        _logger.LogInformation("Finished downloading {FileName}.", fileName);
+    }
+
+    private async Task DownloadAndExtractZipAsync(string targetDir, string url, CancellationToken ct)
+    {
+        var zipPath = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName() + ".zip");
+        _logger.LogInformation("Downloading zip from {Url} to {ZipPath}...", url, zipPath);
+        
+        try
+        {
+            using (var client = new HttpClient())
+            {
+                client.Timeout = TimeSpan.FromHours(2);
+                var response = await client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct);
+                response.EnsureSuccessStatusCode();
+                await using var fileStream = File.Create(zipPath);
+                await response.Content.CopyToAsync(fileStream, ct);
+            }
+
+            _logger.LogInformation("Extracting zip to {TargetDir}...", targetDir);
+            Directory.CreateDirectory(targetDir);
+            System.IO.Compression.ZipFile.ExtractToDirectory(zipPath, targetDir, overwriteFiles: true);
+            _logger.LogInformation("Finished extracting zip to {TargetDir}.", targetDir);
+        }
+        finally
+        {
+            try { if (File.Exists(zipPath)) File.Delete(zipPath); } catch { }
+        }
+    }
+
+    private int GetMaxRecordsLimit(DataSourceConfig source)
+    {
+        // Limits the number of records (rows in RawUniversalData) per source.
+        // Dictionaries, grammar, Quran, and Hadith are fully ingested (int.MaxValue).
+        return source.Id switch
+        {
+            // Web crawlers (limit pages)
+            9 => 5000,   // Wikipedia Science
+            10 => 5000,  // Hsoub Academy
+            15 => 10000, // Altibbi
+            16 => 5000,  // Wikipedia Medicine
+            17 => 5000,  // Investing.com
+            18 => 5000,  // Al-Eqtisad
+            21 => 10000, // Kooora
+            25 => 10000, // Youm7
+            26 => 10000, // Masrawy
+            27 => 5000,  // Wikipedia Literature
+            28 => 5000,  // Wikipedia DailyLife
+            36 => 5000,  // Wikipedia Physics
+            37 => 5000,  // Wikipedia Chemistry
+            38 => 5000,  // Wikipedia Biology
+            39 => 5000,  // Wikipedia Mathematics
+            40 => 5000,  // Wikipedia Cardiology
+            41 => 5000,  // Wikipedia Neurology
+            42 => 5000,  // Wikipedia Economics
+            43 => 5000,  // Wikipedia Poetry
+            44 => 5000,  // Wikipedia Food
+            45 => 5000,  // Wikipedia Fiqh
+
+            // Massive offline corpora (limit rows/sentences to prevent domain imbalance)
+            53 => 50000,  // OSCAR Arabic
+            54 => 50000,  // CC-100 Arabic
+            55 => 100000, // OPUS Parallel Corpus
+            56 => 150000, // OpenSubtitles (Arabic)
+
+            // Dictionaries, Religion, and Grammar have no limits
+            _ => int.MaxValue
+        };
     }
 }

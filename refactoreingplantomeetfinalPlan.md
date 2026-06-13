@@ -4,7 +4,7 @@ This document outlines the exact, step-by-step technical implementation required
 
 ---
 
-## 1. Epic 1: Toolchain & Validation (Sidecar Orchestrator)
+## 1. Epic 1: Toolchain & Validation (Sidecar Orchestrator) [COMPLETED]
 The primary model (458M) training must occur in Python/PyTorch due to TorchSharp limitations. `.NET` will act as a sidecar orchestrator to manage and monitor this process.
 
 ### Refactoring `LisanBits.Trainer/Program.cs`
@@ -21,7 +21,7 @@ The primary model (458M) training must occur in Python/PyTorch due to TorchSharp
 
 ---
 
-## 2. Epic 2: Data Acquisition and Cleaning
+## 2. Epic 2: Data Acquisition and Cleaning [COMPLETED]
 The pipeline must clean data before insertion, utilizing FastText for Language Identification and MinHash for deduplication. *Note: Shamela and Sunnah are already correctly configured with XPaths in PipelineDbContext and LexiconParser.cs.*
 
 ### Dependency Addition

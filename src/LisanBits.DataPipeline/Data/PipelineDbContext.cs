@@ -107,7 +107,14 @@ public class PipelineDbContext : DbContext
             // MADAR Datasets (Dialect Support)
             new DataSourceConfig { Id = 50, Name = "MADAR Parallel Corpus (Local TSV)", Category = "Dialect", BaseUrl = "https://camel.abudhabi.nyu.edu/madar-parallel-corpus/MADAR.Parallel-Corpora-Public-Version1.1-25MAR2021.zip", TargetXPath = "TSV_FILE", PaginationParam = "", LinkXPath = null, DiscoveryXPath = null, IsActive = true },
             new DataSourceConfig { Id = 51, Name = "MADAR CODA Corpus (Local TSV)", Category = "Dialect", BaseUrl = "https://camel.abudhabi.nyu.edu/madar-coda-corpus/madar.coda-corpus.zip", TargetXPath = "TSV_FILE", PaginationParam = "", LinkXPath = null, DiscoveryXPath = null, IsActive = true },
-            new DataSourceConfig { Id = 52, Name = "MADAR Shared Task 2019 (Local TSV)", Category = "Dialect", BaseUrl = "https://camel.abudhabi.nyu.edu/madar-shared-task-2019/MADAR-SHARED-TASK-final-release-25Jul2019.zip", TargetXPath = "TSV_FILE", PaginationParam = "", LinkXPath = null, DiscoveryXPath = null, IsActive = true }
+            new DataSourceConfig { Id = 52, Name = "MADAR Shared Task 2019 (Local TSV)", Category = "Dialect", BaseUrl = "https://camel.abudhabi.nyu.edu/madar-shared-task-2019/MADAR-SHARED-TASK-final-release-25Jul2019.zip", TargetXPath = "TSV_FILE", PaginationParam = "", LinkXPath = null, DiscoveryXPath = null, IsActive = true },
+
+            // Large-Scale General and Dialect Corpora (Missing resources added)
+            new DataSourceConfig { Id = 53, Name = "OSCAR Arabic", Category = "General", BaseUrl = "https://huggingface.co/datasets/oscar-corpus/OSCAR-2201/resolve/main/data/ar_meta_part_1.jsonl.zst", TargetXPath = "JSONL_ZST_FILE", PaginationParam = "", LinkXPath = null, DiscoveryXPath = null, IsActive = false },
+            new DataSourceConfig { Id = 54, Name = "CC-100 Arabic", Category = "General", BaseUrl = "https://data.statmt.org/cc-100/ar.txt.xz", TargetXPath = "XZ_TEXT_FILE", PaginationParam = "", LinkXPath = null, DiscoveryXPath = null, IsActive = false },
+            new DataSourceConfig { Id = 55, Name = "OPUS Parallel Corpus", Category = "General", BaseUrl = "https://object.pouta.csc.fi/OPUS-MultiUN/v1/moses/ar-en.txt.zip", TargetXPath = "MOSES_ZIP_FILE", PaginationParam = "", LinkXPath = null, DiscoveryXPath = null, IsActive = false },
+            new DataSourceConfig { Id = 56, Name = "OpenSubtitles (Arabic)", Category = "Dialect", BaseUrl = "https://object.pouta.csc.fi/OPUS-OpenSubtitles/v2018/mono/ar.txt.gz", TargetXPath = "GZ_TEXT_FILE", PaginationParam = "", LinkXPath = null, DiscoveryXPath = null, IsActive = false },
+            new DataSourceConfig { Id = 57, Name = "Quranic Arabic Corpus (Morphology)", Category = "Religion", BaseUrl = "https://raw.githubusercontent.com/mustafa0x/quran-morphology/master/quran-morphology.txt", TargetXPath = "TSV_FILE", PaginationParam = "", LinkXPath = null, DiscoveryXPath = null, IsActive = true }
             );
     }
 }

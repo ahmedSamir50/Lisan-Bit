@@ -77,9 +77,10 @@ public class DataCleaner
     /// Processes the input text, normalizes it, and runs the language ID and deduplication gates.
     /// </summary>
     /// <param name="rawText">The raw input text to clean.</param>
+    /// <param name="category">The data source category (e.g. Religion, Slang, Linguistics).</param>
     /// <param name="cleanedText">The resulting normalized, cleaned text.</param>
     /// <returns>True if the text passes all quality gates; false otherwise.</returns>
-    public bool ProcessAndVerify(string rawText, out string cleanedText)
+    public bool ProcessAndVerify(string rawText, string category, out string cleanedText)
     {
         cleanedText = string.Empty;
         if (string.IsNullOrWhiteSpace(rawText)) return false;
@@ -87,7 +88,11 @@ public class DataCleaner
         // Gate 1: Length Filtering
         if (rawText.Length < 100 || rawText.Length > 100000)
         {
-            return false;
+            // Quranic morphology annotations (which are processed through this route) can be short
+            if (category != "Religion" && category != "Linguistics" || rawText.Length < 2)
+            {
+                return false;
+            }
         }
 
         // Gate 2: Language Identification (Graceful degradation)
@@ -98,17 +103,24 @@ public class DataCleaner
         }
 
         // Gate 3: Unicode Normalization
-        cleanedText = StripTashkeelAndNormalize(rawText);
+        cleanedText = StripTashkeelAndNormalize(rawText, category);
         if (string.IsNullOrWhiteSpace(cleanedText) || cleanedText.Length < 50)
         {
-            return false;
+            if (category != "Religion" && category != "Linguistics")
+            {
+                return false;
+            }
         }
 
         // Gate 4: Near-duplicate detection (MinHash + LSH)
-        bool isDuplicate = CheckAndRegisterDuplicate(cleanedText);
-        if (isDuplicate)
+        // Skip duplicate checking for fine-grained Quranic segment annotations
+        if (category != "Religion" || rawText.Length > 50)
         {
-            return false;
+            bool isDuplicate = CheckAndRegisterDuplicate(cleanedText);
+            if (isDuplicate)
+            {
+                return false;
+            }
         }
 
         return true;
@@ -117,7 +129,7 @@ public class DataCleaner
     /// <summary>
     /// Processes lexicon entry text, normalizes it, and runs language ID and deduplication gates with a lower minimum length.
     /// </summary>
-    public bool ProcessAndVerifyLexicon(string rawText, out string cleanedText)
+    public bool ProcessAndVerifyLexicon(string rawText, string category, out string cleanedText)
     {
         cleanedText = string.Empty;
         if (string.IsNullOrWhiteSpace(rawText)) return false;
@@ -136,7 +148,7 @@ public class DataCleaner
         }
 
         // Gate 3: Unicode Normalization
-        cleanedText = StripTashkeelAndNormalize(rawText);
+        cleanedText = StripTashkeelAndNormalize(rawText, category);
         if (string.IsNullOrWhiteSpace(cleanedText))
         {
             return false;
@@ -155,7 +167,7 @@ public class DataCleaner
     /// <summary>
     /// Processes dialect/slang text, normalizes it, and runs quality gates with lower minimum length and dialect-aware language checks.
     /// </summary>
-    public bool ProcessAndVerifyDialect(string rawText, out string cleanedText)
+    public bool ProcessAndVerifyDialect(string rawText, string category, out string cleanedText)
     {
         cleanedText = string.Empty;
         if (string.IsNullOrWhiteSpace(rawText)) return false;
@@ -174,7 +186,7 @@ public class DataCleaner
         }
 
         // Gate 3: Unicode Normalization
-        cleanedText = StripTashkeelAndNormalize(rawText);
+        cleanedText = StripTashkeelAndNormalize(rawText, category);
         if (string.IsNullOrWhiteSpace(cleanedText))
         {
             return false;
@@ -246,9 +258,15 @@ public class DataCleaner
         return ratio > 0.7; // 70% threshold
     }
 
-    public string StripTashkeelAndNormalize(string text)
+    public string StripTashkeelAndNormalize(string text, string category)
     {
         if (string.IsNullOrEmpty(text)) return string.Empty;
+
+        // Skip stripping diacritics and spelling normalizations for Religion (Quranic Arabic) and Linguistics (Lexicons)
+        if (category == "Religion" || category == "Linguistics")
+        {
+            return text.Normalize(NormalizationForm.FormC); // Keep all diacritics and spelling exact (NFC)
+        }
 
         // Use shared RemoveTashkeel extension
         var normalized = text.RemoveTashkeel();
@@ -268,7 +286,7 @@ public class DataCleaner
     private bool CheckAndRegisterDuplicate(string text)
     {
         // Simple word tokenization
-        var tokens = text.Split(new[] { ' ', '\t', '\r', '\n', '،', '.', ',', '!', '?' }, StringSplitOptions.RemoveEmptyEntries)
+        var tokens = text.Split(new[] { ' ', '\t', '\r', '\n', '，', '.', ',', '!', '?' }, StringSplitOptions.RemoveEmptyEntries)
                          .Where(t => t.Length > 1)
                          .ToArray();
 

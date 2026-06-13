@@ -18,6 +18,12 @@ builder.Services.AddHttpClient("GrammarPipeline", client =>
 })
 .AddServiceDiscovery();
 
+builder.Services.AddHttpClient("GraphSeeder", client =>
+{
+    client.BaseAddress = new Uri("http://graph-seeder");
+})
+.AddServiceDiscovery();
+
 // Use the same absolute database path as DataPipeline
 builder.Services.AddDbContextFactory<PipelineDbContext>(options =>
 {

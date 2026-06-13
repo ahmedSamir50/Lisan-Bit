@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\LisanBits.DataPipeline\LisanBits.DataPipeline.csproj" />
+    <ProjectReference Include="..\LisanBits.ServiceDefaults\LisanBits.ServiceDefaults.csproj" />
+  </ItemGroup>
+</Project>

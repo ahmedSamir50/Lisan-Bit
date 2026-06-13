@@ -6,6 +6,7 @@
     <ProjectReference Include="..\LisanBits.Dashboard\LisanBits.Dashboard.csproj" />
     <ProjectReference Include="..\LisanBits.ConceptNetImporter\LisanBits.ConceptNetImporter.csproj" />
     <ProjectReference Include="..\LisanBits.GrammarPipeline\LisanBits.GrammarPipeline.csproj" />
+    <ProjectReference Include="..\LisanBits.GraphSeeder\LisanBits.GraphSeeder.csproj" />
     <ProjectReference Include="..\LisanBits.Trainer\LisanBits.Trainer.csproj" />
   </ItemGroup>
 
