@@ -1,5 +1,6 @@
 using LisanBits.DataPipeline.Acquisition;
 using LisanBits.DataPipeline.Data;
+using System.IO.Compression;
 using LisanBits.DataPipeline.Data.Models;
 using Microsoft.EntityFrameworkCore;
 using System.Text.Encodings.Web;
@@ -14,18 +15,20 @@ public class Worker : BackgroundService
     private readonly ILogger<Worker> _logger;
     private readonly IServiceProvider _serviceProvider;
     private readonly UniversalHtmlScraper _scraper;
+    private readonly LisanBits.DataPipeline.Preprocessing.DataCleaner _dataCleaner;
     private readonly SemaphoreSlim _dbWriteLock = new SemaphoreSlim(1, 1);
     private readonly SemaphoreSlim _datasetPrepLock = new SemaphoreSlim(1, 1);
     private readonly string _dashboardHubUrl;
     private readonly IConfiguration _configuration;
     private HubConnection? _hubConnection;
 
-    public Worker(ILogger<Worker> logger, IServiceProvider serviceProvider, UniversalHtmlScraper scraper, IConfiguration configuration)
+    public Worker(ILogger<Worker> logger, IServiceProvider serviceProvider, UniversalHtmlScraper scraper, IConfiguration configuration, LisanBits.DataPipeline.Preprocessing.DataCleaner dataCleaner)
     {
         _logger = logger;
         _serviceProvider = serviceProvider;
         _scraper = scraper;
         _configuration = configuration;
+        _dataCleaner = dataCleaner;
         
         // Aspire injects project endpoints as services__lisanbits-dashboard__http__0
         // which maps to services:lisanbits-dashboard:http:0 in IConfiguration.
@@ -200,6 +203,8 @@ public class Worker : BackgroundService
                 // ARB-EGY-CMP (Local JSON) - Id 30
                 // BaseUrl is driven by SlangDataset:CmpCorrectedPath config, never hard-coded.
                 UpdateConfig(30, c => { c.BaseUrl = $"file:///{cmpCorrectedPath}"; });
+
+
                 
                 if (dbChanged)
                 {
@@ -312,6 +317,25 @@ public class Worker : BackgroundService
                             }
                         }
                     }
+                    else if (source.Id == 50 || source.Id == 51 || source.Id == 52)
+                    {
+                        var localPath = Path.Combine(Path.GetTempPath(), "LisanBits", $"MADAR_{source.Id}");
+                        if (Directory.Exists(localPath))
+                        {
+                            var files = Directory.GetFiles(localPath, "*.tsv", SearchOption.AllDirectories);
+                            foreach (var file in files)
+                            {
+                                var fileUrl = $"file:///{file.Replace('\\', '/')}";
+                                db.CrawledUrlQueue.Add(new CrawledUrl
+                                {
+                                    DataSourceId = source.Id,
+                                    Url = fileUrl,
+                                    Status = "Pending",
+                                    Depth = 0
+                                });
+                            }
+                        }
+                    }
                     else
                     {
                         db.CrawledUrlQueue.Add(new CrawledUrl
@@ -391,17 +415,35 @@ public class Worker : BackgroundService
                     {
                         if (item.Sentences > 0)
                         {
-                            db.RawUniversalData.Add(new RawUniversalData
+                            bool passes = false;
+                            string cleanedText = "";
+                            if (source.Category == "Slang" || source.Category == "Dialect")
                             {
-                                Category = source.Category,
-                                SubContextPath = item.SubContextPath, // resolved taxonomy leaf path from WikiCategoryResolver
-                                Source = source.Name,
-                                TextContent = item.Text,
-                                SentenceCount = item.Sentences,
-                                WordCount = item.Words,
-                                ScrapedAt = DateTime.UtcNow
-                            });
-                            addedData++;
+                                passes = _dataCleaner.ProcessAndVerifyDialect(item.Text, out cleanedText);
+                            }
+                            else
+                            {
+                                passes = _dataCleaner.ProcessAndVerify(item.Text, out cleanedText);
+                            }
+
+                            if (passes)
+                            {
+                                db.RawUniversalData.Add(new RawUniversalData
+                                {
+                                    Category = source.Category,
+                                    SubContextPath = item.SubContextPath, // resolved taxonomy leaf path from WikiCategoryResolver
+                                    Source = source.Name,
+                                    TextContent = cleanedText,
+                                    SentenceCount = item.Sentences,
+                                    WordCount = item.Words,
+                                    ScrapedAt = DateTime.UtcNow
+                                });
+                                addedData++;
+                            }
+                            else
+                            {
+                                logger.LogInformation("Text item from source {SourceName} failed quality/deduplication gates. Skipping.", source.Name);
+                            }
                         }
                     }
 
@@ -416,8 +458,16 @@ public class Worker : BackgroundService
                                 stoppingToken);
                             if (!exists)
                             {
-                                db.LexiconEntries.Add(lexiconEntry);
-                                addedData++;
+                                if (_dataCleaner.ProcessAndVerifyLexicon(lexiconEntry.Definition, out string cleanedDefinition))
+                                {
+                                    lexiconEntry.Definition = cleanedDefinition;
+                                    db.LexiconEntries.Add(lexiconEntry);
+                                    addedData++;
+                                }
+                                else
+                                {
+                                    logger.LogInformation("Lexicon entry '{Word}' from {SourceBook} failed quality/deduplication gates. Skipping.", lexiconEntry.Word, lexiconEntry.SourceBook);
+                                }
                             }
                         }
                     }
@@ -585,18 +635,30 @@ public class Worker : BackgroundService
 
     private async Task<bool> EnsureSourceReadyForProcessingAsync(DataSourceConfig source, CancellationToken ct)
     {
-        if (source.Id != 29 && source.Id != 30)
+        if (source.Id != 29 && source.Id != 30 && source.Id != 50 && source.Id != 51 && source.Id != 52)
             return true;
 
-        if (!source.BaseUrl.StartsWith("file:///", StringComparison.OrdinalIgnoreCase))
-            return true;
-
-        var localPath = source.BaseUrl.Replace("file:///", "").Replace('/', Path.DirectorySeparatorChar);
+        string localPath;
+        if (source.Id == 50 || source.Id == 51 || source.Id == 52)
+        {
+            localPath = Path.Combine(Path.GetTempPath(), "LisanBits", $"MADAR_{source.Id}").Replace('\\', '/');
+        }
+        else
+        {
+            if (!source.BaseUrl.StartsWith("file:///", StringComparison.OrdinalIgnoreCase))
+                return true;
+            localPath = source.BaseUrl.Replace("file:///", "").Replace('/', Path.DirectorySeparatorChar);
+        }
         
         if (source.Id == 29)
         {
             var slangDir = Path.Combine(Path.GetDirectoryName(localPath) ?? @"D:\A_S", "nofal_slang");
             if (Directory.Exists(slangDir) && Directory.GetFiles(slangDir, "*.xlsx", SearchOption.AllDirectories).Length > 0)
+                return true;
+        }
+        else if (source.Id == 50 || source.Id == 51 || source.Id == 52)
+        {
+            if (Directory.Exists(localPath) && Directory.GetFiles(localPath, "*.tsv", SearchOption.AllDirectories).Length > 0)
                 return true;
         }
         else
@@ -625,6 +687,10 @@ public class Worker : BackgroundService
                     ?? "https://www.kaggle.com/api/v1/datasets/download/mksaad/arb-egy-cmp-corpus";
                 await DownloadExtractAndFixArbEgyCmpAsync(localPath, kaggleUrl, ct);
             }
+            else if (source.Id == 50 || source.Id == 51 || source.Id == 52)
+            {
+                await DownloadAndExtractMadarZipAsync(localPath, source.BaseUrl, ct);
+            }
         }
         catch (Exception ex)
         {
@@ -640,7 +706,64 @@ public class Worker : BackgroundService
             var slangDir = Path.Combine(Path.GetDirectoryName(localPath) ?? @"D:\A_S", "nofal_slang");
             return Directory.Exists(slangDir) && Directory.GetFiles(slangDir, "*.xlsx", SearchOption.AllDirectories).Length > 0;
         }
+        if (source.Id == 50 || source.Id == 51 || source.Id == 52)
+        {
+            return Directory.Exists(localPath) && Directory.GetFiles(localPath, "*.tsv", SearchOption.AllDirectories).Length > 0;
+        }
         return File.Exists(localPath);
+    }
+
+    private async Task DownloadAndExtractMadarZipAsync(string targetDir, string url, CancellationToken ct)
+    {
+        var zipPath = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName() + ".zip");
+        _logger.LogInformation("Downloading MADAR archive from {Url} to {ZipPath}...", url, zipPath);
+        
+        try
+        {
+            if (!await DownloadKaggleZipAsync(url, zipPath, ct))
+            {
+                _logger.LogError("Failed to download MADAR archive from {Url}", url);
+                return;
+            }
+
+            _logger.LogInformation("Extracting MADAR archive to {TargetDir}...", targetDir);
+            Directory.CreateDirectory(targetDir);
+
+            using var archive = System.IO.Compression.ZipFile.OpenRead(zipPath);
+            foreach (var entry in archive.Entries)
+            {
+                if (entry.FullName.Contains('\r') || entry.FullName.Contains('\n'))
+                {
+                    _logger.LogWarning("Skipping zip entry with invalid character: {EntryName}", entry.FullName);
+                    continue;
+                }
+
+                var destinationPath = Path.GetFullPath(Path.Combine(targetDir, entry.FullName));
+                if (entry.FullName.EndsWith("/") || entry.FullName.EndsWith("\\"))
+                {
+                    Directory.CreateDirectory(destinationPath);
+                    continue;
+                }
+
+                var entryDir = Path.GetDirectoryName(destinationPath);
+                if (!string.IsNullOrEmpty(entryDir))
+                {
+                    Directory.CreateDirectory(entryDir);
+                }
+                entry.ExtractToFile(destinationPath, overwrite: true);
+            }
+
+            _logger.LogInformation("Extraction of MADAR archive completed successfully.");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error occurred during download and extraction of MADAR archive from {Url}", url);
+            throw;
+        }
+        finally
+        {
+            try { if (File.Exists(zipPath)) File.Delete(zipPath); } catch { }
+        }
     }
 
     private async Task<bool> DownloadKaggleZipAsync(string kaggleUrl, string zipPath, CancellationToken ct)

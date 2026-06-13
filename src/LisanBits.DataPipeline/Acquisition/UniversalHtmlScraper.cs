@@ -196,6 +196,110 @@ public class UniversalHtmlScraper
                     return result;
                 }
 
+                // TSV_FILE: chunked line-by-line ingestion for tab-separated dialect/parallel corpora
+                if (config.TargetXPath == "TSV_FILE")
+                {
+                    int linesRead = 0;
+                    int linesSkipped = 0;
+                    
+                    // Parse header first to find text columns
+                    string[]? headers = null;
+                    int rawIdx = -1;
+                    int codaIdx = -1;
+                    int sentIdx = -1;
+
+                    await foreach (var line in ReadLinesAsync(filePath, cancellationToken))
+                    {
+                        if (string.IsNullOrWhiteSpace(line)) continue;
+
+                        var parts = line.Split('\t');
+                        if (headers == null)
+                        {
+                            // Detect if first line is a header
+                            if (parts[0].Contains("sentID", StringComparison.OrdinalIgnoreCase) || 
+                                parts[0].Contains("id", StringComparison.OrdinalIgnoreCase))
+                            {
+                                headers = parts;
+                                for (int i = 0; i < parts.Length; i++)
+                                {
+                                    var h = parts[i].Trim();
+                                    if (h.Equals("raw", StringComparison.OrdinalIgnoreCase)) rawIdx = i;
+                                    else if (h.Equals("CODA", StringComparison.OrdinalIgnoreCase)) codaIdx = i;
+                                    else if (h.Equals("sent", StringComparison.OrdinalIgnoreCase)) sentIdx = i;
+                                }
+                                continue;
+                            }
+                            else
+                            {
+                                // No header, set headers to empty so we don't try to detect again
+                                headers = Array.Empty<string>();
+                            }
+                        }
+
+                        if (linesSkipped < skipRows) { linesSkipped++; continue; }
+                        if (linesRead >= chunkSize) break;
+
+                        // Extract text based on detected columns
+                        if (rawIdx != -1 || codaIdx != -1 || sentIdx != -1)
+                        {
+                            if (codaIdx != -1 && codaIdx < parts.Length && !string.IsNullOrWhiteSpace(parts[codaIdx]))
+                            {
+                                var processed = ProcessContent(parts[codaIdx]);
+                                if (processed.Sentences > 0)
+                                    result.ExtractedData.Add((processed.Text, processed.Sentences, processed.Words, null));
+                            }
+                            if (rawIdx != -1 && rawIdx < parts.Length && !string.IsNullOrWhiteSpace(parts[rawIdx]))
+                            {
+                                var processed = ProcessContent(parts[rawIdx]);
+                                if (processed.Sentences > 0)
+                                    result.ExtractedData.Add((processed.Text, processed.Sentences, processed.Words, null));
+                            }
+                            if (sentIdx != -1 && sentIdx < parts.Length && !string.IsNullOrWhiteSpace(parts[sentIdx]))
+                            {
+                                var processed = ProcessContent(parts[sentIdx]);
+                                if (processed.Sentences > 0)
+                                    result.ExtractedData.Add((processed.Text, processed.Sentences, processed.Words, null));
+                            }
+                        }
+                        else
+                        {
+                            // Fallback: search columns and pick the longest column containing Arabic text.
+                            string textVal = "";
+                            foreach (var part in parts)
+                            {
+                                var trimmedPart = part.Trim();
+                                if (trimmedPart.Length > textVal.Length && Regex.IsMatch(trimmedPart, @"[\u0600-\u06FF]"))
+                                {
+                                    textVal = trimmedPart;
+                                }
+                            }
+                            
+                            if (string.IsNullOrEmpty(textVal) && parts.Length > 0)
+                            {
+                                textVal = parts[0].Trim();
+                            }
+
+                            if (!string.IsNullOrWhiteSpace(textVal))
+                            {
+                                var processed = ProcessContent(textVal);
+                                if (processed.Sentences > 0)
+                                    result.ExtractedData.Add((processed.Text, processed.Sentences, processed.Words, null));
+                            }
+                        }
+
+                        linesRead++;
+                    }
+
+                    // Queue the next chunk if we actually read a full chunk
+                    if (linesRead == chunkSize)
+                    {
+                        var nextSkip = skipRows + chunkSize;
+                        result.DiscoveredUrls.Add($"file:///{filePath.Replace('\\', '/')}?skip={nextSkip}");
+                    }
+
+                    return result;
+                }
+
                 // JSONL_TEXT_FILE: chunked JSON ingestion (handles both JSON Lines and a single large JSON Array)
                 if (config.TargetXPath == "JSONL_TEXT_FILE")
                 {

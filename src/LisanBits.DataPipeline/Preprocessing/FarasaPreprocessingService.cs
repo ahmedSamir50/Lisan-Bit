@@ -4,6 +4,7 @@ using LisanBits.DataPipeline.Data;
 using LisanBits.DataPipeline.Data.Models;
 using Microsoft.EntityFrameworkCore;
 using Shared.Extentions.StringExt;
+using static Shared.Extentions.StringExt.ArabicStringExtentions;
 
 namespace LisanBits.DataPipeline.Preprocessing;
 
@@ -320,7 +321,7 @@ public class FarasaPreprocessingService : BackgroundService
             var cache = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             foreach (var entry in entries)
             {
-                string normWord = RemoveTashkeel(entry.Word).Trim();
+                string normWord = entry.Word.RemoveTashkeel().Trim();
                 if (!string.IsNullOrEmpty(normWord) && !cache.ContainsKey(normWord))
                 {
                     cache[normWord] = entry.Root;

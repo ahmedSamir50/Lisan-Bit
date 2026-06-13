@@ -71,4 +71,12 @@ var dataPipeline = builder.AddProject<Projects.LisanBits_DataPipeline>("lisanbit
                            .WaitFor(neo4j)
                            .WaitFor(dashboard);
 
+var trainerApi = builder.AddDockerfile("lisanbits-trainer-api", "../LisanBits.Trainer.Api")
+                        .WithHttpEndpoint(targetPort: 8000, name: "trainer-endpoint");
+
+var trainer = builder.AddProject<Projects.LisanBits_Trainer>("lisanbits-trainer")
+                     .WithReference(trainerApi.GetEndpoint("trainer-endpoint"))
+                     .WithReference(pipelineDb)
+                     .WaitFor(trainerApi);
+
 builder.Build().Run();

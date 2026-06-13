@@ -1,6 +1,7 @@
 using HtmlAgilityPack;
 using LisanBits.DataPipeline.Data.Models;
 using Shared.Extentions.StringExt;
+using static Shared.Extentions.StringExt.ArabicStringExtentions;
 using System.Text;
 using System.Text.RegularExpressions;
 
@@ -136,7 +137,7 @@ public class LexiconParser
 
         if (parts.Length == 2)
         {
-            string secondWord = RemoveTashkeel(parts[1]);
+            string secondWord = parts[1].RemoveTashkeel();
             if (secondWord.StartsWith("و") && secondWord.Length > 2)
             {
                 return true;
@@ -145,7 +146,7 @@ public class LexiconParser
 
         if (parts.Length == 3)
         {
-            string middle = RemoveTashkeel(parts[1]);
+            string middle = parts[1].RemoveTashkeel();
             if (middle == "او" || middle == "أو")
             {
                 return true;
@@ -187,14 +188,14 @@ public class LexiconParser
         var parts = val.Split(new[] { ' ', '،', ',', '؛', ';' }, StringSplitOptions.RemoveEmptyEntries);
         foreach (var part in parts)
         {
-            string normPart = RemoveTashkeel(part);
+            string normPart = part.RemoveTashkeel();
             if (BreakPrepositions.Contains(normPart))
             {
                 break;
             }
 
             string cleaned = CleanWord(part);
-            if (cleaned.Length >= 2 && !IsSkipWord(cleaned) && !PrepositionsAndConjunctions.Contains(RemoveTashkeel(cleaned)))
+            if (cleaned.Length >= 2 && !IsSkipWord(cleaned) && !PrepositionsAndConjunctions.Contains(cleaned.RemoveTashkeel()))
             {
                 list.Add(cleaned);
             }
@@ -214,7 +215,7 @@ public class LexiconParser
             string trimmed = seg.Trim();
             if (string.IsNullOrEmpty(trimmed)) continue;
 
-            string normalized = RemoveTashkeel(trimmed).Trim();
+            string normalized = trimmed.RemoveTashkeel().Trim();
 
             // 1. Plurals
             var plurMatch = Regex.Match(normalized, @"^(?:ج\b|جمع\b|الجمع\b|والجمع\b|جمعها\b|وجمعها\b|جمعه\b|وجمعه\b|جموع\b|الجموع\b|والجموع\b|جموعها\b|وجموعها\b)\s*:?\s*[\(\)]?\s*(?<val>[\u0621-\u064A\s]{2,40})");
@@ -243,7 +244,7 @@ public class LexiconParser
             if (synMatch.Success)
             {
                 string val = synMatch.Groups["val"].Value;
-                if (!ContainsPrepositions(RemoveTashkeel(val)))
+                if (!ContainsPrepositions(val.RemoveTashkeel()))
                 {
                     ExtractWordsFromSegment(val, syns);
                 }
@@ -266,7 +267,7 @@ public class LexiconParser
                 cleanedSeg = parts[0].Trim();
             }
 
-            string normCleanSeg = RemoveTashkeel(cleanedSeg).Trim();
+            string normCleanSeg = cleanedSeg.RemoveTashkeel().Trim();
             if (string.IsNullOrEmpty(normCleanSeg)) continue;
 
             var words = normCleanSeg.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
@@ -298,14 +299,14 @@ public class LexiconParser
         }
 
         string cleanHead = CleanWord(headword);
-        syns.RemoveAll(s => s == cleanHead || RemoveTashkeel(s) == RemoveTashkeel(cleanHead));
+        syns.RemoveAll(s => s == cleanHead || s.RemoveTashkeel() == cleanHead.RemoveTashkeel());
     }
 
     private static string? DetectRootHeader(int bookId, string text)
     {
         if (string.IsNullOrWhiteSpace(text)) return null;
 
-        string textNoTashkeel = RemoveTashkeel(text).Trim();
+        string textNoTashkeel = text.RemoveTashkeel().Trim();
 
         if (bookId == 1687)
         {
@@ -574,7 +575,7 @@ public class LexiconParser
     private static string GetStrongConsonants(string word)
     {
         if (string.IsNullOrEmpty(word)) return "";
-        string normalized = RemoveTashkeel(word);
+        string normalized = word.RemoveTashkeel();
         var sb = new StringBuilder();
         foreach (char c in normalized)
         {

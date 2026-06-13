@@ -18,6 +18,9 @@ builder.Services.AddDbContext<PipelineDbContext>(options =>
 // Register Neo4j Database Service
 builder.Services.AddSingleton<Neo4jService>();
 
+// Register Preprocessing DataCleaner
+builder.Services.AddSingleton<LisanBits.DataPipeline.Preprocessing.DataCleaner>();
+
 // Register Universal Scraper with Polly standard resilience
 builder.Services.AddHttpClient<UniversalHtmlScraper>()
     .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
